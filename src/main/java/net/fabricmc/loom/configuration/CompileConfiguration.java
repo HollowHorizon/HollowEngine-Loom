@@ -83,6 +83,7 @@ import net.fabricmc.loom.configuration.providers.mappings.MappingConfiguration;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftMetadataProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
+import net.fabricmc.loom.configuration.multiversion.MultiversionSupport;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.AbstractMappedMinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.IntermediaryMinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.MojangMappedMinecraftProvider;
@@ -119,6 +120,7 @@ public abstract class CompileConfiguration implements Runnable {
 
 		afterEvaluationWithService((serviceFactory) -> {
 			final ConfigContext configContext = new ConfigContextImpl(getProject(), serviceFactory, extension);
+			final boolean skipMinecraftSetup = shouldSkipMinecraftSetup(extension);
 
 			MinecraftSourceSets.get(getProject()).afterEvaluate(getProject());
 
@@ -135,11 +137,15 @@ public abstract class CompileConfiguration implements Runnable {
 				// Setting up loom across Gradle projects is not thread safe, synchronize it here to ensure that multiple projects cannot use it.
 				// There is no easy way around this, as we want to use the same global cache for downloaded or generated files.
 				synchronized (getGlobalLockObject()) {
-					setupMinecraft(configContext);
+					if (!skipMinecraftSetup) {
+						setupMinecraft(configContext);
+					}
 				}
 
-				var dependencyManager = new LoomDependencyManager(getProject(), serviceFactory, extension);
-				dependencyManager.handleDependencies();
+				if (!skipMinecraftSetup) {
+					var dependencyManager = new LoomDependencyManager(getProject(), serviceFactory, extension);
+					dependencyManager.handleDependencies();
+				}
 			} catch (Exception e) {
 				ExceptionUtil.processException(e, DaemonUtils.Context.fromProject(getProject()));
 				disownLock();
@@ -155,7 +161,9 @@ public abstract class CompileConfiguration implements Runnable {
 				setupMixinAp(mixin);
 			}
 
-			configureDecompileTasks(configContext);
+			if (!skipMinecraftSetup) {
+				configureDecompileTasks(configContext);
+			}
 			configureTestTask();
 
 			if (extension.isForgeLike()) {
@@ -293,6 +301,18 @@ public abstract class CompileConfiguration implements Runnable {
 			extension.setMojangMappedMinecraftProvider(mojangMappedMinecraftProvider);
 			mojangMappedMinecraftProvider.provide(provideContext);
 		}
+	}
+
+	private boolean shouldSkipMinecraftSetup(LoomGradleExtension extension) {
+		if (!MultiversionSupport.isMultiversionProject(getProject())) {
+			return false;
+		}
+
+		if (extension.getMultiversionTarget().getMinecraftVersion().isPresent()) {
+			return false;
+		}
+
+		return getProject().getConfigurations().getByName(Configurations.MINECRAFT).getDependencies().isEmpty();
 	}
 
 	private void registerGameProcessors(ConfigContext configContext) {

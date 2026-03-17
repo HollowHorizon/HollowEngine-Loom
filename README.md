@@ -1,21 +1,11 @@
-# Architectury Loom
+# HollowEngine Loom
 
-Talk to us on [Discord](https://discord.gg/C2RdJDpRBP)!
+Talk to us on [Discord](https://discord.gg/bvtdfZRtKE)!
 
 ---
 
-A fork of [Juuxel's Loom fork]("https://github.com/Juuxel/fabric-loom") that is a fork of [Fabric Loom](https://github.com/FabricMC/fabric-loom) that supports the Forge modding toolchain.
-
-A [Gradle](https://gradle.org/) plugin to setup a deobfuscated development environment for Minecraft mods. Primarily used in the Fabric toolchain.
-
-* Has built in support for tiny mappings (Used by [Yarn](https://github.com/FabricMC/yarn))
-* Utilises the Fernflower and CFR decompilers to generate source code with comments.
-* Designed to support modern versions of Minecraft (Tested with 1.14.4 and upwards)
-* ~~Built in support for IntelliJ IDEA, Eclipse and Visual Studio Code to generate run configurations for Minecraft.~~
-  - Currently, only IntelliJ IDEA and Visual Studio Code work with Forge Loom.
-* Loom targets the latest version of Gradle 7 or newer 
-* Supports Java 17 upwards
+A fork of [Architectury Loom fork]("https://github.com/Juuxel/fabric-loom") that is a fork of [Fabric Loom](https://github.com/FabricMC/fabric-loom) that supports the Multiversion & Multi-modloader modding toolchain.
 
 ## Usage
 
-View the [documentation](https://docs.architectury.dev/loom/introduction) for usages.
+The tool was just created as an idea for multiversion development, so far it is more of an experiment than a real project, but there is a small demo in the [tests](src/test/resources/projects/multiversion/build.gradle) and brief [documentation](docs/multiversion-setup.md).

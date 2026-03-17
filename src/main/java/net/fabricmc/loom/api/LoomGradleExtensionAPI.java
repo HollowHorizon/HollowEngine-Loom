@@ -121,6 +121,18 @@ public interface LoomGradleExtensionAPI {
 
 	void mixin(Action<MixinExtensionAPI> action);
 
+	MultiversionExtensionAPI getMultiversion();
+
+	default void multiversion(Action<MultiversionExtensionAPI> action) {
+		action.execute(getMultiversion());
+	}
+
+	MultiversionTargetAPI getMultiversionTarget();
+
+	default void multiversionTarget(Action<MultiversionTargetAPI> action) {
+		action.execute(getMultiversionTarget());
+	}
+
 	/**
 	 * Optionally register and configure a {@link ModSettings} object. The name should match the modid.
 	 * This is generally only required when the mod spans across multiple classpath directories, such as when using split sourcesets.

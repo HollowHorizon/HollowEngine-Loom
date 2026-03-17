@@ -1,0 +1,5 @@
+rootProject.name = 'multiversion'
+
+include 'common'
+include 'fabric1201'
+include 'fabric1211'

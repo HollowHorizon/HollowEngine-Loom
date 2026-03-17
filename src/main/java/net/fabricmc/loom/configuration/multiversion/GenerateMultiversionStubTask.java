@@ -1,0 +1,211 @@
+/*
+ * This file is part of fabric-loom, licensed under the MIT License (MIT).
+ *
+ * Copyright (c) 2026 FabricMC
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+package net.fabricmc.loom.configuration.multiversion;
+
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.DependencyArtifact;
+import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.provider.MapProperty;
+import org.gradle.api.provider.Property;
+import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.Internal;
+import org.gradle.api.tasks.OutputFile;
+import org.gradle.api.tasks.TaskAction;
+
+import net.fabricmc.loom.LoomGradlePlugin;
+import net.fabricmc.loom.configuration.DependencyInfo;
+import net.fabricmc.loom.configuration.mods.dependency.LocalMavenHelper;
+import net.fabricmc.loom.configuration.providers.BundleMetadata;
+import net.fabricmc.loom.configuration.providers.mappings.MappingConfiguration;
+import net.fabricmc.loom.configuration.providers.minecraft.MergedMinecraftProvider;
+import net.fabricmc.loom.configuration.providers.minecraft.MinecraftVersionMeta;
+import net.fabricmc.loom.configuration.providers.minecraft.VersionsManifest;
+import net.fabricmc.loom.task.AbstractLoomTask;
+import net.fabricmc.loom.util.Constants;
+import net.fabricmc.loom.util.TinyRemapperHelper;
+import net.fabricmc.loom.util.download.Download;
+import net.fabricmc.tinyremapper.OutputConsumerPath;
+import net.fabricmc.tinyremapper.TinyRemapper;
+
+public abstract class GenerateMultiversionStubTask extends AbstractLoomTask {
+	@Input
+	public abstract MapProperty<String, String> getVersionMappings();
+
+	@Input
+	public abstract Property<String> getBaseVersion();
+
+	@Input
+	public abstract Property<String> getStubVersion();
+
+	@Input
+	public abstract Property<String> getConstantsClass();
+
+	@OutputFile
+	public abstract RegularFileProperty getStubJar();
+
+	@OutputFile
+	public abstract RegularFileProperty getSourcesJar();
+
+	@Internal
+	public abstract RegularFileProperty getPublishedStubJar();
+
+	@Internal
+	public abstract RegularFileProperty getPublishedSourcesJar();
+
+	@TaskAction
+	public void generate() throws Exception {
+		final Path workingDirectory = MultiversionSupport.createWorkingDirectory(getProject(), getStubVersion().get());
+		final MultiversionCollector collector = new MultiversionCollector();
+
+		for (Map.Entry<String, String> entry : new LinkedHashMap<>(getVersionMappings().get()).entrySet()) {
+			final Path namedJar = resolveNamedJar(workingDirectory, entry.getKey(), entry.getValue());
+			collector.addVersion(entry.getKey(), namedJar);
+		}
+
+		final Path stubJar = getStubJar().get().getAsFile().toPath();
+		final Path sourcesJar = getSourcesJar().get().getAsFile().toPath();
+		Files.createDirectories(stubJar.getParent());
+		Files.createDirectories(sourcesJar.getParent());
+		new MultiversionStubGenerator().generate(collector, stubJar, sourcesJar, getConstantsClass().get());
+
+		final LocalMavenHelper helper = MultiversionSupport.createStubMavenHelper(getProject(), getStubVersion().get());
+		helper.copyToMaven(stubJar, null);
+		helper.copyToMaven(sourcesJar, "sources");
+	}
+
+	private Path resolveNamedJar(Path workingDirectory, String minecraftVersion, String mappingsNotation) throws Exception {
+		final Path versionDirectory = workingDirectory.resolve(minecraftVersion.replace(':', '_'));
+		Files.createDirectories(versionDirectory);
+		final Path mergedJar = resolveMergedOfficialJar(versionDirectory, minecraftVersion);
+		final Path intermediaryTiny = resolveIntermediaryTiny(versionDirectory, minecraftVersion);
+		final Path intermediaryJar = versionDirectory.resolve("minecraft-intermediary.jar");
+		final Path mappingsJar = resolveMappingsJar(versionDirectory, mappingsNotation);
+		final Path mappingsTiny = versionDirectory.resolve("mappings.tiny");
+		final Path namedJar = versionDirectory.resolve("minecraft-named.jar");
+
+		if (Files.exists(namedJar) && !getExtension().refreshDeps()) {
+			return namedJar;
+		}
+
+		remapJar(mergedJar, intermediaryJar, intermediaryTiny, "official", "intermediary");
+		MappingConfiguration.extractMappings(mappingsJar, mappingsTiny);
+		remapJar(intermediaryJar, namedJar, mappingsTiny, "intermediary", "named");
+
+		return namedJar;
+	}
+
+	private void remapJar(Path inputJar, Path outputJar, Path mappingsTiny, String fromNamespace, String toNamespace) throws IOException {
+		final TinyRemapper remapper = TinyRemapper.newRemapper()
+				.withMappings(TinyRemapperHelper.create(mappingsTiny, fromNamespace, toNamespace, false))
+				.build();
+
+		try (OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(outputJar).build()) {
+			outputConsumer.addNonClassFiles(inputJar);
+			remapper.readInputs(inputJar);
+			remapper.apply(outputConsumer);
+		} finally {
+			remapper.finish();
+		}
+	}
+
+	private Path resolveIntermediaryTiny(Path versionDirectory, String minecraftVersion) throws IOException {
+		final Path intermediaryTiny = versionDirectory.resolve("intermediary.tiny");
+
+		if (Files.exists(intermediaryTiny) && !getExtension().refreshDeps()) {
+			return intermediaryTiny;
+		}
+
+		final String encodedMcVersion = URLEncoder.encode(minecraftVersion, StandardCharsets.UTF_8);
+		final ModuleDependency intermediaryDependency = (ModuleDependency) getProject().getDependencies().create("net.fabricmc:intermediary:" + encodedMcVersion);
+		intermediaryDependency.artifact(new org.gradle.api.Action<DependencyArtifact>() {
+			@Override
+			public void execute(DependencyArtifact dependencyArtifact) {
+				dependencyArtifact.setClassifier("v2");
+			}
+		});
+
+		final Configuration configuration = getProject().getConfigurations().detachedConfiguration(intermediaryDependency);
+		configuration.setTransitive(false);
+
+		final Path intermediaryJar = versionDirectory.resolve("intermediary-mappings.jar");
+		Files.copy(configuration.getSingleFile().toPath(), intermediaryJar, StandardCopyOption.REPLACE_EXISTING);
+		MappingConfiguration.extractMappings(intermediaryJar, intermediaryTiny);
+		return intermediaryTiny;
+	}
+
+	private Path resolveMappingsJar(Path versionDirectory, String mappingsNotation) {
+		final Configuration configuration = getProject().getConfigurations().detachedConfiguration(getProject().getDependencies().create(mappingsNotation));
+		configuration.setTransitive(false);
+		return DependencyInfo.create(getProject(), configuration).resolveFile().orElseThrow(() -> new IllegalStateException("Failed to resolve mappings " + mappingsNotation)).toPath();
+	}
+
+	private Path resolveMergedOfficialJar(Path versionDirectory, String minecraftVersion) throws Exception {
+		final String manifestJson = Download.create(Constants.VERSION_MANIFESTS).defaultCache().downloadString(versionDirectory.resolve("version_manifest.json"));
+		final VersionsManifest manifest = LoomGradlePlugin.GSON.fromJson(manifestJson, VersionsManifest.class);
+		final VersionsManifest.Version version = manifest.getVersion(minecraftVersion);
+
+		if (version == null) {
+			throw new IllegalStateException("Failed to find Minecraft version " + minecraftVersion);
+		}
+
+		final String versionMetaJson = Download.create(version.url).defaultCache().downloadString(versionDirectory.resolve("version_meta.json"));
+		final MinecraftVersionMeta meta = LoomGradlePlugin.GSON.fromJson(versionMetaJson, MinecraftVersionMeta.class);
+		final Path clientJar = download(meta.download("client"), versionDirectory.resolve("minecraft-client.jar"));
+		Path serverJar = download(meta.download("server"), versionDirectory.resolve("minecraft-server.jar"));
+		final BundleMetadata bundleMetadata = BundleMetadata.fromJar(serverJar);
+
+		if (bundleMetadata != null && !bundleMetadata.versions().isEmpty()) {
+			final Path extractedServer = versionDirectory.resolve("minecraft-extracted-server.jar");
+			bundleMetadata.versions().get(0).unpackEntry(serverJar, extractedServer, getProject());
+			serverJar = extractedServer;
+		}
+
+		final Path mergedJar = versionDirectory.resolve("minecraft-merged.jar");
+
+		if (Files.notExists(mergedJar) || getExtension().refreshDeps()) {
+			MergedMinecraftProvider.mergeJars(clientJar.toFile(), serverJar.toFile(), mergedJar.toFile());
+		}
+
+		return mergedJar;
+	}
+
+	private Path download(MinecraftVersionMeta.Download download, Path target) throws Exception {
+		Download.create(download.url())
+				.sha1(download.sha1())
+				.defaultCache()
+				.downloadPath(target);
+		return target;
+	}
+}

@@ -128,26 +128,23 @@ public abstract class GenerateDLIConfigTask extends AbstractLoomTask {
 	protected abstract SetProperty<ForgeRunTemplate.Resolved> getRunTemplates();
 
 	public GenerateDLIConfigTask() {
-		getVersionInfoJson().set(LoomGradlePlugin.GSON.toJson(getExtension().getMinecraftProvider().getVersionInfo()));
-		getMinecraftVersion().set(getExtension().getMinecraftProvider().minecraftVersion());
-		getSplitSourceSets().set(getExtension().areEnvironmentSourceSetsSplit());
+		getVersionInfoJson().set(getProject().provider(() -> LoomGradlePlugin.GSON.toJson(getExtension().getMinecraftProvider().getVersionInfo())));
+		getMinecraftVersion().set(getProject().provider(() -> getExtension().getMinecraftProvider().minecraftVersion()));
+		getSplitSourceSets().set(getProject().provider(() -> getExtension().areEnvironmentSourceSetsSplit()));
 		getANSISupportedIDE().set(ansiSupportedIde(getProject()));
 		getPlainConsole().set(getProject().getGradle().getStartParameter().getConsoleOutput() == ConsoleOutput.Plain);
 		getClasspathGroupOptions().set(ClasspathGroupService.create(getProject()));
 
 		getLog4jConfigPaths().set(getAllLog4JConfigFiles(getProject()));
 
-		if (getSplitSourceSets().get()) {
-			getClientGameJarPath().set(getGameJarPath("client"));
-			getCommonGameJarPath().set(getGameJarPath("common"));
-		}
+		getClientGameJarPath().set(getProject().provider(() -> getExtension().areEnvironmentSourceSetsSplit() ? getGameJarPath("client") : null));
+		getCommonGameJarPath().set(getProject().provider(() -> getExtension().areEnvironmentSourceSetsSplit() ? getGameJarPath("common") : null));
 
 		getAssetsDirectoryPath().set(new File(getExtension().getFiles().getUserCache(), "assets").getAbsolutePath());
-		getNativesDirectoryPath().set(getExtension().getFiles().getNativesDirectory(getProject()).getAbsolutePath());
+		getNativesDirectoryPath().set(getProject().provider(() -> getExtension().getFiles().getNativesDirectory(getProject()).getAbsolutePath()));
 		getDevLauncherConfig().set(getExtension().getFiles().getDevLauncherConfig());
 
 		getPlatformMappingFile().set(getProject().getLayout().file(getProject().provider(() -> getExtension().getPlatformMappingFile().toFile())));
-		getPlatformMappingFile().finalizeValue();
 		getMappingJars().from(getProject().getConfigurations().getByName(Constants.Configurations.MAPPINGS_FINAL));
 
 		if (getExtension().isForgeLike()) {

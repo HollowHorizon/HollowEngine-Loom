@@ -59,10 +59,9 @@ public abstract class GenerateRemapClasspathTask extends AbstractLoomTask {
 				.map(RemapConfigurationSettings::getName)
 				.map(configurations::named)
 				.forEach(getRemapClasspath()::from);
-
-		for (Path minecraftJar : getExtension().getMinecraftJars(MappingsNamespace.INTERMEDIARY)) {
-			getRemapClasspath().from(minecraftJar.toFile());
-		}
+		getRemapClasspath().from(getProject().provider(() -> getExtension().getMinecraftJars(MappingsNamespace.INTERMEDIARY).stream()
+				.map(Path::toFile)
+				.toList()));
 
 		getRemapClasspathFile().set(getExtension().getFiles().getRemapClasspathFile());
 	}

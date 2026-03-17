@@ -39,6 +39,7 @@ import org.gradle.api.tasks.TaskProvider;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.configuration.ide.RunConfigSettings;
+import net.fabricmc.loom.configuration.multiversion.MultiversionSupport;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftJarConfiguration;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftVersionMeta;
 import net.fabricmc.loom.task.launch.GenerateDLIConfigTask;
@@ -114,14 +115,18 @@ public abstract class LoomTasks implements Runnable {
 			t.setGroup("verification");
 		});
 
-		getTasks().named("check").configure(task -> task.dependsOn(validateAccessWidener));
-
 		registerIDETasks();
 		registerRunTasks();
 
 		// Must be done in afterEvaluate to allow time for the build script to configure the jar config.
 		GradleUtils.afterSuccessfulEvaluation(getProject(), () -> {
 			LoomGradleExtension extension = LoomGradleExtension.get(getProject());
+
+			if (shouldSkipMinecraftSetup(extension)) {
+				return;
+			}
+
+			getTasks().named("check").configure(task -> task.dependsOn(validateAccessWidener));
 
 			if (extension.getMinecraftJarConfiguration().get() == MinecraftJarConfiguration.SERVER_ONLY) {
 				// Server only, nothing more to do.
@@ -137,6 +142,18 @@ public abstract class LoomTasks implements Runnable {
 
 			registerClientSetupTasks(getTasks(), versionInfo.hasNativesToExtract());
 		});
+	}
+
+	private boolean shouldSkipMinecraftSetup(LoomGradleExtension extension) {
+		if (!MultiversionSupport.isMultiversionProject(getProject())) {
+			return false;
+		}
+
+		if (extension.getMultiversionTarget().getMinecraftVersion().isPresent()) {
+			return false;
+		}
+
+		return getProject().getConfigurations().getByName(Constants.Configurations.MINECRAFT).getDependencies().isEmpty();
 	}
 
 	private void registerIDETasks() {
@@ -194,6 +211,11 @@ public abstract class LoomTasks implements Runnable {
 
 		// Remove the client or server run config when not required. Done by name to not remove any possible custom run configs
 		GradleUtils.afterSuccessfulEvaluation(getProject(), () -> {
+			if (MultiversionSupport.isMultiversionProject(getProject())
+					&& LoomGradleExtension.get(getProject()).getMultiversionTarget().getMinecraftVersion().isPresent()) {
+				extension.getRunConfigs().configureEach(runConfig -> runConfig.ideConfigGenerated(true));
+			}
+
 			String taskName;
 
 			boolean serverOnly = extension.getMinecraftJarConfiguration().get() == MinecraftJarConfiguration.SERVER_ONLY;

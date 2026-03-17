@@ -104,6 +104,7 @@ public abstract class AbstractRunTask extends JavaExec {
 						config.get().getExcludedLibraryPaths(getProject()),
 						config.get().configName)
 				)));
+		dependsOn(getInternalClasspath());
 
 		getArgumentProviders().add(() -> config.get().programArgs);
 		getMainClass().set(config.map(runConfig -> runConfig.mainClass));

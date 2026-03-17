@@ -44,6 +44,7 @@ import net.fabricmc.loom.configuration.LoomConfigurations;
 import net.fabricmc.loom.configuration.MavenPublication;
 import net.fabricmc.loom.configuration.fabricapi.FabricApiExtensionImpl;
 import net.fabricmc.loom.configuration.ide.idea.IdeaConfiguration;
+import net.fabricmc.loom.configuration.multiversion.MultiversionConfiguration;
 import net.fabricmc.loom.configuration.sandbox.SandboxConfiguration;
 import net.fabricmc.loom.decompilers.DecompilerConfiguration;
 import net.fabricmc.loom.extension.LoomFiles;
@@ -64,6 +65,7 @@ public class LoomGradlePlugin implements Plugin<PluginAware> {
 	 */
 	private static final List<Class<? extends Runnable>> SETUP_JOBS = List.of(
 			LoomConfigurations.class,
+			MultiversionConfiguration.class,
 			CompileConfiguration.class,
 			MavenPublication.class,
 			RemapTaskConfiguration.class,

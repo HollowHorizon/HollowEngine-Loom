@@ -1,0 +1,76 @@
+plugins {
+	id 'dev.architectury.loom' apply false
+}
+
+allprojects {
+	group = 'com.example'
+	version = '1.0.0'
+
+	repositories {
+		mavenCentral()
+		maven {
+			url = 'https://maven.fabricmc.net/'
+		}
+	}
+}
+
+subprojects {
+	apply plugin: 'java-library'
+	apply plugin: 'dev.architectury.loom'
+
+	tasks.withType(JavaCompile).configureEach {
+		it.options.release = 17
+		it.options.encoding = 'UTF-8'
+	}
+
+	java {
+		sourceCompatibility = JavaVersion.VERSION_17
+		targetCompatibility = JavaVersion.VERSION_17
+		withSourcesJar()
+	}
+
+	loom {
+		multiversion {
+			baseVersion = '1.20.1'
+			constantsClass = 'com.example.Constants'
+
+			versions {
+				create('1.20.1') {
+					mappings = 'net.fabricmc:yarn:1.20.1+build.1:v2'
+				}
+
+				create('1.21.1') {
+					mappings = 'net.fabricmc:yarn:1.21.1+build.3:v2'
+				}
+			}
+		}
+	}
+}
+
+project(':fabric1201') {
+	dependencies {
+		minecraft 'com.mojang:minecraft:1.20.1'
+		mappings 'net.fabricmc:yarn:1.20.1+build.1:v2'
+		modImplementation 'net.fabricmc:fabric-loader:0.16.9'
+	}
+
+	loom {
+		multiversionTarget {
+			minecraftVersion = '1.20.1'
+		}
+	}
+}
+
+project(':fabric1211') {
+	dependencies {
+		minecraft 'com.mojang:minecraft:1.21.1'
+		mappings 'net.fabricmc:yarn:1.21.1+build.3:v2'
+		modImplementation 'net.fabricmc:fabric-loader:0.16.9'
+	}
+
+	loom {
+		multiversionTarget {
+			minecraftVersion = '1.21.1'
+		}
+	}
+}

@@ -121,6 +121,9 @@ public class Constants {
 		 * Used to query classpath data across project boundaries.
 		 */
 		public static final String EXPORTED_CLASSPATH = "loomExportedClasspath";
+		public static final String MINECRAFT_NAMED_COMPILE = "minecraftNamedCompile";
+		public static final String MINECRAFT_COMMON_NAMED_COMPILE = "minecraftCommonNamedCompile";
+		public static final String MINECRAFT_CLIENT_ONLY_NAMED_COMPILE = "minecraftClientOnlyNamedCompile";
 
 		private Configurations() {
 		}

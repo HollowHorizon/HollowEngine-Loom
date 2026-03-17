@@ -69,6 +69,9 @@ import net.fabricmc.loom.api.remapping.RemapperParameters;
 import net.fabricmc.loom.configuration.RemapConfigurations;
 import net.fabricmc.loom.configuration.ide.RunConfig;
 import net.fabricmc.loom.configuration.ide.RunConfigSettings;
+import net.fabricmc.loom.configuration.multiversion.MultiversionExtension;
+import net.fabricmc.loom.configuration.multiversion.MultiversionSupport;
+import net.fabricmc.loom.configuration.multiversion.MultiversionTarget;
 import net.fabricmc.loom.configuration.processors.JarProcessor;
 import net.fabricmc.loom.configuration.providers.mappings.LayeredMappingSpec;
 import net.fabricmc.loom.configuration.providers.mappings.LayeredMappingSpecBuilderImpl;
@@ -78,6 +81,7 @@ import net.fabricmc.loom.configuration.providers.minecraft.MinecraftJarConfigura
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftMetadataProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
 import net.fabricmc.loom.task.GenerateSourcesTask;
+import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.DeprecationHelper;
 import net.fabricmc.loom.util.Lazy;
 import net.fabricmc.loom.util.MirrorUtil;
@@ -112,6 +116,8 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 	private final Property<MinecraftJarConfiguration<?, ?, ?>> minecraftJarConfiguration;
 	private final Property<Boolean> splitEnvironmentalSourceSet;
 	private final InterfaceInjectionExtensionAPI interfaceInjectionExtension;
+	private final MultiversionExtension multiversionExtension;
+	private final MultiversionTarget multiversionTarget;
 
 	private final NamedDomainObjectContainer<RunConfigSettings> runConfigs;
 	private final NamedDomainObjectContainer<DecompilerOptions> decompilers;
@@ -179,6 +185,13 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 		this.minecraftJarConfiguration = project.getObjects().property((Class<MinecraftJarConfiguration<?, ?, ?>>) (Class<?>) MinecraftJarConfiguration.class)
 				.convention(project.provider(() -> {
 					final LoomGradleExtension extension = LoomGradleExtension.get(project);
+
+					if (MultiversionSupport.isMultiversionProject(project)
+							&& !((MultiversionTarget) extension.getMultiversionTarget()).isConfigured()
+							&& project.getConfigurations().getByName(Constants.Configurations.MINECRAFT).getDependencies().isEmpty()) {
+						return MinecraftJarConfiguration.MERGED;
+					}
+
 					final MinecraftMetadataProvider metadataProvider = extension.getMetadataProvider();
 
 					// if no configuration is selected by the user, attempt to select one
@@ -206,6 +219,9 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 
 		this.interfaceInjectionExtension = project.getObjects().newInstance(InterfaceInjectionExtensionAPI.class);
 		this.interfaceInjectionExtension.getIsEnabled().convention(true);
+		this.multiversionExtension = project.getObjects().newInstance(MultiversionExtension.class, project);
+		this.multiversionTarget = project.getObjects().newInstance(MultiversionTarget.class, project);
+		this.multiversionTarget.getConstantsClass().convention(this.multiversionExtension.getConstantsClass());
 
 		this.splitEnvironmentalSourceSet = project.getObjects().property(Boolean.class).convention(false);
 		this.splitEnvironmentalSourceSet.finalizeValueOnRead();
@@ -474,6 +490,16 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 	@Override
 	public InterfaceInjectionExtensionAPI getInterfaceInjection() {
 		return interfaceInjectionExtension;
+	}
+
+	@Override
+	public MultiversionExtension getMultiversion() {
+		return multiversionExtension;
+	}
+
+	@Override
+	public MultiversionTarget getMultiversionTarget() {
+		return multiversionTarget;
 	}
 
 	@Override
