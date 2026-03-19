@@ -1,0 +1,14 @@
+<html>
+<body>
+Reports usages of APIs marked with <code>@RequiresApi</code> when they are not protected by a matching version guard.
+<p>
+The first implementation recognizes direct Java guards such as:
+</p>
+<pre><code>if (Constants.is(1211)) {
+    BlockPos.max(a, b);
+}</code></pre>
+<p>
+It also accepts enclosing methods or classes annotated with <code>@RequiresApi</code>.
+</p>
+</body>
+</html>

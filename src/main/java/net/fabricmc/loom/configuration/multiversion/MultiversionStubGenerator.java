@@ -176,9 +176,11 @@ public final class MultiversionStubGenerator {
 		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
 			final MethodVisitor visitor = writer.visitMethod(method.getAccess(), method.getName(), method.getDescriptor(), null, method.getExceptions().toArray(String[]::new));
 			writeRequiresApiAnnotation(visitor.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), method.getVersions());
+
 			if ((method.getAccess() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) == 0) {
 				writeMethodBody(visitor, classes, classInfo, method);
 			}
+
 			visitor.visitEnd();
 		}
 

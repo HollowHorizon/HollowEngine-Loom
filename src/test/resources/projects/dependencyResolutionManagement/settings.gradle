@@ -1,11 +1,11 @@
 pluginManagement {
 	plugins {
-		id 'dev.architectury.loom'
+		id 'ru.hollowhorizon.hollowengine-loom'
 	}
 }
 
 plugins {
-	id 'dev.architectury.loom'
+	id 'ru.hollowhorizon.hollowengine-loom'
 }
 
 dependencyResolutionManagement {

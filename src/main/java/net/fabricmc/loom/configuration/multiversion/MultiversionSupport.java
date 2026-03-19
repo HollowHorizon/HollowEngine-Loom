@@ -51,7 +51,7 @@ public final class MultiversionSupport {
 			return local;
 		}
 
-		if (project.equals(project.getRootProject()) || !project.getRootProject().getPluginManager().hasPlugin("dev.architectury.loom")) {
+		if (project.equals(project.getRootProject()) || !project.getRootProject().getPluginManager().hasPlugin("ru.hollowhorizon.hollowengine-loom")) {
 			return local;
 		}
 

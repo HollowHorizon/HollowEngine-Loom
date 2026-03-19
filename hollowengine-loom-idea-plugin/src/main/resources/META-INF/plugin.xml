@@ -1,0 +1,32 @@
+<idea-plugin>
+    <id>ru.hollowhorizon.hollowengine-loom</id>
+    <name>HollowEngine Loom</name>
+    <vendor email="contact@hollowhorizon.dev">HollowHorizon</vendor>
+
+    <description><![CDATA[
+        IntelliJ support for HollowEngine Loom multiversion development.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
+    <depends>org.jetbrains.kotlin</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <localInspection
+                language="JAVA"
+                shortName="HollowEngineRequiresApiGuard"
+                displayName="RequiresApi usage must be version-guarded"
+                groupName="HollowEngine Loom"
+                enabledByDefault="true"
+                level="ERROR"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.RequiresApiGuardInspection"/>
+        <localInspection
+                language="kotlin"
+                shortName="HollowEngineKotlinRequiresApiGuard"
+                displayName="RequiresApi usage must be version-guarded"
+                groupName="HollowEngine Loom"
+                enabledByDefault="true"
+                level="ERROR"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.KotlinRequiresApiGuardInspection"/>
+    </extensions>
+</idea-plugin>

@@ -24,8 +24,12 @@
 
 package net.fabricmc.loom.configuration.multiversion;
 
+import java.io.File;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import javax.inject.Inject;
@@ -174,10 +178,18 @@ public abstract class MultiversionConfiguration implements Runnable {
 			return;
 		}
 
+		final String targetVersion = MultiversionSupport.requireTargetVersion(getProject());
+		final Map<Project, org.gradle.api.tasks.TaskProvider<PrepareMultiversionSharedOutputTask>> preparedOutputs = new LinkedHashMap<>();
+
+		for (Project sharedProject : sharedProjects) {
+			preparedOutputs.put(sharedProject, registerPreparedSharedOutput(sharedProject, targetVersion));
+		}
+
 		getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class).configure(task -> {
 			for (Project sharedProject : sharedProjects) {
-				task.dependsOn(sharedProject.getTasks().named(JavaPlugin.CLASSES_TASK_NAME));
-				task.from(SourceSetHelper.getMainSourceSet(sharedProject).getOutput());
+				final var preparedOutput = preparedOutputs.get(sharedProject);
+				task.dependsOn(preparedOutput);
+				task.from(preparedOutput.flatMap(PrepareMultiversionSharedOutputTask::getOutputDirectory));
 			}
 		});
 
@@ -193,8 +205,9 @@ public abstract class MultiversionConfiguration implements Runnable {
 
 		getTasks().withType(AbstractRunTask.class).configureEach(task -> {
 			for (Project sharedProject : sharedProjects) {
-				task.dependsOn(sharedProject.getTasks().named(JavaPlugin.JAR_TASK_NAME));
-				task.classpath(sharedProject.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class).flatMap(Jar::getArchiveFile));
+				final var preparedOutput = preparedOutputs.get(sharedProject);
+				task.dependsOn(preparedOutput);
+				task.classpath(preparedOutput.flatMap(PrepareMultiversionSharedOutputTask::getOutputDirectory));
 			}
 		});
 
@@ -203,8 +216,62 @@ public abstract class MultiversionConfiguration implements Runnable {
 				|| task.getName().startsWith("configureLaunch"))
 				.configureEach(task -> {
 					for (Project sharedProject : sharedProjects) {
-						task.dependsOn(sharedProject.getTasks().named(JavaPlugin.JAR_TASK_NAME));
+						task.dependsOn(preparedOutputs.get(sharedProject));
 					}
 				});
+	}
+
+	private org.gradle.api.tasks.TaskProvider<PrepareMultiversionSharedOutputTask> registerPreparedSharedOutput(Project sharedProject, String targetVersion) {
+		final String taskName = "prepare" + sharedTaskSuffix(sharedProject) + "For" + versionTaskSuffix(targetVersion);
+		final SourceSet sharedMainSourceSet = SourceSetHelper.getMainSourceSet(sharedProject);
+
+		return getTasks().register(taskName, PrepareMultiversionSharedOutputTask.class, task -> {
+			task.dependsOn(sharedProject.getTasks().named(JavaPlugin.CLASSES_TASK_NAME));
+			task.getTargetVersion().set(targetVersion);
+			task.getInputDirectories().from(sharedMainSourceSet.getOutput().getClassesDirs());
+			task.getInputDirectories().from(sharedProject.provider(() -> {
+				final File resourcesDir = sharedMainSourceSet.getOutput().getResourcesDir();
+				return resourcesDir == null ? List.of() : List.of(resourcesDir);
+			}));
+			task.getOutputDirectory().set(getProject().getLayout().getBuildDirectory().dir("loom-cache/prepared-shared/" + sharedTaskSuffix(sharedProject).toLowerCase(Locale.ROOT) + "/" + targetVersion));
+		});
+	}
+
+	private static String sharedTaskSuffix(Project sharedProject) {
+		final String[] parts = sharedProject.getPath().split(":");
+		final StringBuilder builder = new StringBuilder();
+
+		for (String part : parts) {
+			if (part.isBlank()) {
+				continue;
+			}
+
+			builder.append(capitalize(part.replaceAll("[^A-Za-z0-9]", " ")));
+		}
+
+		return builder.length() == 0 ? "Shared" : builder.toString();
+	}
+
+	private static String versionTaskSuffix(String version) {
+		return version.replaceAll("[^A-Za-z0-9]", "");
+	}
+
+	private static String capitalize(String value) {
+		final String[] parts = value.trim().split("\\s+");
+		final StringBuilder builder = new StringBuilder();
+
+		for (String part : parts) {
+			if (part.isEmpty()) {
+				continue;
+			}
+
+			builder.append(Character.toUpperCase(part.charAt(0)));
+
+			if (part.length() > 1) {
+				builder.append(part.substring(1));
+			}
+		}
+
+		return builder.toString();
 	}
 }

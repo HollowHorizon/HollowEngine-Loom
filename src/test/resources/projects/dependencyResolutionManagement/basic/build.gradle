@@ -1,5 +1,5 @@
 plugins {
-	id 'dev.architectury.loom'
+	id 'ru.hollowhorizon.hollowengine-loom'
 	id 'maven-publish'
 }
 

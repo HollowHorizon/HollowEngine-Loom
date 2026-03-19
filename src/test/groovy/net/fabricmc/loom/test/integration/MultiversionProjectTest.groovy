@@ -70,8 +70,8 @@ class MultiversionProjectTest extends Specification implements GradleProjectTest
 		constants1201.text.contains("public static boolean isAtLeast")
 		constants1211.text.contains("public static boolean isAtLeast")
 
-		def stubJar = findArtifact(gradle.projectDir, { it.name.startsWith("multiversion-stub-") && it.name.endsWith(".jar") && !it.name.endsWith("-sources.jar") })
-		def sourcesJar = findArtifact(gradle.projectDir, { it.name.startsWith("multiversion-stub-") && it.name.endsWith("-sources.jar") })
+		def stubJar = findArtifact(gradle.projectDir) { it.name.startsWith("multiversion-stub-") && it.name.endsWith(".jar") && !it.name.endsWith("-sources.jar") }
+		def sourcesJar = findArtifact(gradle.projectDir) { it.name.startsWith("multiversion-stub-") && it.name.endsWith("-sources.jar") }
 
 		ZipUtils.unpackNullable(stubJar.toPath(), "multiversion/api/RequiresApi.class") != null
 		ZipUtils.unpackNullable(stubJar.toPath(), "META-INF/loom/multiversion-api.json") != null

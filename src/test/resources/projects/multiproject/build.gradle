@@ -1,13 +1,13 @@
 plugins {
 	id "java"
 	id "java-library"
-	id 'dev.architectury.loom' apply false
+	id 'ru.hollowhorizon.hollowengine-loom' apply false
 }
 
 allprojects {
 	if (it.path == ":javalib") return;
 
-	apply plugin: "dev.architectury.loom"
+	apply plugin: "ru.hollowhorizon.hollowengine-loom"
 
 	version = "1.0.0"
 

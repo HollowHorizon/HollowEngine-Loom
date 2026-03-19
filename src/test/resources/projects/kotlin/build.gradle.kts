@@ -5,7 +5,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
 	kotlin("jvm") version "2.0.21"
 	kotlin("plugin.serialization") version "2.0.21"
-    id("dev.architectury.loom")
+    id("ru.hollowhorizon.hollowengine-loom")
 	`maven-publish`
 }
 

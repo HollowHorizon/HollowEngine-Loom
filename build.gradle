@@ -5,10 +5,7 @@ plugins {
 	id 'idea'
 	id 'eclipse'
 	id 'groovy'
-	id 'checkstyle'
-	id 'codenarc'
 	alias(libs.plugins.kotlin)
-	alias(libs.plugins.spotless)
 	alias(libs.plugins.retry)
 }
 
@@ -22,7 +19,7 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
 	}
 }
 
-group = "dev.architectury"
+group = "ru.hollowhorizon"
 def baseVersion = '1.13'
 
 def ENV = System.getenv()
@@ -224,58 +221,14 @@ java {
 	targetCompatibility = JavaVersion.VERSION_21
 }
 
-spotless {
-	lineEndings = com.diffplug.spotless.LineEnding.UNIX
-
-	java {
-		licenseHeaderFile(rootProject.file("HEADER")).yearSeparator("-")
-		targetExclude("**/loom/util/DownloadUtil.java", "**/loom/util/FileSystemUtil.java")
-		targetExclude("**/dev/architectury/**")
-	}
-
-	groovy {
-		importOrder('java', 'javax', '', 'net.fabricmc', '\\#')
-		licenseHeaderFile(rootProject.file("HEADER")).yearSeparator("-")
-		greclipse()
-	}
-
-	groovyGradle {
-		target 'src/**/*.gradle', '*.gradle'
-		greclipse()
-
-		targetExclude(
-				// These files use a @MAPPINGS@ token which is not valid Groovy
-				'**/projects/forge/simple/build.gradle',
-				'**/projects/neoforge/simple/build.gradle'
-				)
-	}
-
-	kotlin {
-		licenseHeaderFile(rootProject.file("HEADER")).yearSeparator("-")
-		targetExclude("**/build.gradle.kts")
-		targetExclude("src/test/resources/projects/*/**")
-		ktlint()
-	}
-}
-
-checkstyle {
-	configFile = file('checkstyle.xml')
-	toolVersion = libs.versions.checkstyle.get()
-}
-
-codenarc {
-	toolVersion = libs.versions.codenarc.get()
-	configFile = file("codenarc.groovy")
-}
-
 gradlePlugin {
 	plugins {
-		fabricLoom {
-			id = 'dev.architectury.loom'
+		hollowEngineLoom {
+			id = 'ru.hollowhorizon.hollowengine-loom'
 			implementationClass = 'net.fabricmc.loom.LoomGradlePlugin'
 		}
-		fabricLoomCompanion {
-			id = 'dev.architectury.loom-companion'
+		hollowEngineLoomCompanion {
+			id = 'ru.hollowhorizon.hollowengine-loom-companion'
 			implementationClass = 'net.fabricmc.loom.LoomCompanionGradlePlugin'
 		}
 	}

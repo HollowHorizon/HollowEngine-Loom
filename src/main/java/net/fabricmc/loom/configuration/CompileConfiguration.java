@@ -164,6 +164,7 @@ public abstract class CompileConfiguration implements Runnable {
 			if (!skipMinecraftSetup) {
 				configureDecompileTasks(configContext);
 			}
+
 			configureTestTask();
 
 			if (extension.isForgeLike()) {

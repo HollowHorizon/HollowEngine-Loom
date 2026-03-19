@@ -1,5 +1,5 @@
 plugins {
-	id 'dev.architectury.loom' apply false
+	id 'ru.hollowhorizon.hollowengine-loom' apply false
 }
 
 allprojects {
@@ -16,7 +16,7 @@ allprojects {
 
 subprojects {
 	apply plugin: 'java-library'
-	apply plugin: 'dev.architectury.loom'
+	apply plugin: 'ru.hollowhorizon.hollowengine-loom'
 
 	tasks.withType(JavaCompile).configureEach {
 		it.options.release = 17

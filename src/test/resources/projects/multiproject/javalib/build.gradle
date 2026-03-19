@@ -1,4 +1,4 @@
 plugins {
 	id 'java-library'
-	id 'dev.architectury.loom-companion'
+	id 'ru.hollowhorizon.hollowengine-loom-companion'
 }
