@@ -6,7 +6,15 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiModifierListOwner;
+
+import org.jetbrains.kotlin.psi.KtAnnotationEntry;
+import org.jetbrains.kotlin.psi.KtClassOrObject;
+import org.jetbrains.kotlin.psi.KtDeclaration;
+import org.jetbrains.kotlin.psi.KtNamedFunction;
 
 final class RequiresApiInspectionSupport {
 	static final String REQUIRES_API_FQN = "multiversion.api.RequiresApi";
@@ -62,6 +70,66 @@ final class RequiresApiInspectionSupport {
 				.map(RequiresApiInspectionSupport::formatVersion)
 				.collect(Collectors.joining(", "));
 		return "This API is not available on target " + targetVersion + ". It is only available on " + sorted + ".";
+	}
+
+	static Set<Integer> resolveDirectRequiresApi(PsiModifierListOwner owner) {
+		if (owner == null) {
+			return Set.of();
+		}
+
+		final Set<Integer> versions = new LinkedHashSet<>();
+		addJavaAnnotationVersions(owner, versions);
+
+		final PsiElement navigation = owner.getNavigationElement();
+
+		if (navigation instanceof PsiModifierListOwner navigationOwner && navigationOwner != owner) {
+			addJavaAnnotationVersions(navigationOwner, versions);
+		}
+
+		if (navigation instanceof KtDeclaration declaration) {
+			addKotlinAnnotationVersions(declaration, versions);
+		}
+
+		return versions;
+	}
+
+	static boolean isProjectSource(PsiModifierListOwner owner) {
+		if (owner == null) {
+			return false;
+		}
+
+		if (isProjectSource(owner.getContainingFile(), owner.getProject())) {
+			return true;
+		}
+
+		final PsiElement navigation = owner.getNavigationElement();
+		return navigation != null && isProjectSource(navigation.getContainingFile(), owner.getProject());
+	}
+
+	private static boolean isProjectSource(PsiFile file, Project project) {
+		if (file == null || file.getVirtualFile() == null) {
+			return false;
+		}
+
+		return ProjectFileIndex.getInstance(project).isInSource(file.getVirtualFile());
+	}
+
+	private static void addJavaAnnotationVersions(PsiModifierListOwner owner, Set<Integer> versions) {
+		final var annotation = owner.getAnnotation(REQUIRES_API_FQN);
+
+		if (annotation == null) {
+			return;
+		}
+
+		versions.addAll(RequiresApiAnnotationReader.readJavaAnnotationVersions(annotation));
+	}
+
+	private static void addKotlinAnnotationVersions(KtDeclaration declaration, Set<Integer> versions) {
+		if (declaration instanceof KtNamedFunction function) {
+			versions.addAll(RequiresApiAnnotationReader.readKotlinAnnotationVersions(function.getAnnotationEntries()));
+		} else if (declaration instanceof KtClassOrObject klass) {
+			versions.addAll(RequiresApiAnnotationReader.readKotlinAnnotationVersions(klass.getAnnotationEntries()));
+		}
 	}
 
 	private static int parsePart(String part) {

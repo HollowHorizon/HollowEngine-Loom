@@ -116,15 +116,27 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 	}
 
 	private static Set<Integer> collectRequiredVersions(PsiModifierListOwner target) {
-		Set<Integer> versions = intersect(null, MultiversionMetadataResolver.resolveVersions(target, target.getProject()));
-		versions = intersectWithJavaAnnotation(versions, target);
+		Set<Integer> versions = intersect(null, resolveSymbolVersions(target));
 
 		if (target instanceof PsiMember member) {
-			versions = intersect(versions, MultiversionMetadataResolver.resolveVersions(member.getContainingClass(), target.getProject()));
-			versions = intersectWithJavaAnnotation(versions, member.getContainingClass());
+			versions = intersect(versions, resolveSymbolVersions(member.getContainingClass()));
 		}
 
 		return versions == null ? Set.of() : versions;
+	}
+
+	private static Set<Integer> resolveSymbolVersions(PsiModifierListOwner owner) {
+		if (owner == null) {
+			return Set.of();
+		}
+
+		final Set<Integer> sourceVersions = RequiresApiInspectionSupport.resolveDirectRequiresApi(owner);
+
+		if (!sourceVersions.isEmpty() || RequiresApiInspectionSupport.isProjectSource(owner)) {
+			return sourceVersions;
+		}
+
+		return MultiversionMetadataResolver.resolveVersions(owner, owner.getProject());
 	}
 
 	private static Set<Integer> collectContextVersions(PsiElement usage) {
@@ -274,17 +286,7 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 			return current;
 		}
 
-		final Set<Integer> annotationVersions = new LinkedHashSet<>();
-		final PsiAnnotationMemberValue value = annotation.findDeclaredAttributeValue("value");
-
-		if (value instanceof com.intellij.psi.PsiArrayInitializerMemberValue arrayValue) {
-			for (PsiAnnotationMemberValue initializer : arrayValue.getInitializers()) {
-				addPsiVersion(initializer, annotationVersions);
-			}
-		} else if (value != null) {
-			addPsiVersion(value, annotationVersions);
-		}
-
+		final Set<Integer> annotationVersions = RequiresApiAnnotationReader.readJavaAnnotationVersions(annotation);
 		return intersect(current, annotationVersions);
 	}
 
@@ -305,37 +307,7 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 	}
 
 	private static Set<Integer> readKotlinVersions(Iterable<KtAnnotationEntry> entries) {
-		final Set<Integer> versions = new LinkedHashSet<>();
-
-		for (KtAnnotationEntry entry : entries) {
-			final String shortName = entry.getShortName() == null ? null : entry.getShortName().asString();
-
-			if (!"RequiresApi".equals(shortName)) {
-				continue;
-			}
-
-			for (ValueArgumentIterator argument : ValueArgumentIterator.of(entry)) {
-				final KtExpression expression = argument.expression();
-
-				if (expression == null) {
-					continue;
-				}
-
-				final String text = expression.getText().replace("\"", "").replace("'", "");
-
-				if (text.indexOf('.') > 0) {
-					versions.add(RequiresApiInspectionSupport.packVersion(text));
-				}
-			}
-		}
-
-		return versions;
-	}
-
-	private static void addPsiVersion(PsiAnnotationMemberValue annotationValue, Set<Integer> versions) {
-		if (annotationValue instanceof PsiLiteralExpression literalExpression && literalExpression.getValue() instanceof String stringValue) {
-			versions.add(RequiresApiInspectionSupport.packVersion(stringValue));
-		}
+		return RequiresApiAnnotationReader.readKotlinAnnotationVersions(entries);
 	}
 
 	private static Set<Integer> intersect(Set<Integer> left, Set<Integer> right) {
@@ -350,17 +322,5 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 		final Set<Integer> intersection = new LinkedHashSet<>(left);
 		intersection.retainAll(right);
 		return intersection;
-	}
-
-	private record ValueArgumentIterator(KtExpression expression) {
-		static Iterable<ValueArgumentIterator> of(KtAnnotationEntry entry) {
-			final java.util.List<ValueArgumentIterator> arguments = new java.util.ArrayList<>();
-
-			for (org.jetbrains.kotlin.psi.ValueArgument argument : entry.getValueArguments()) {
-				arguments.add(new ValueArgumentIterator(argument.getArgumentExpression()));
-			}
-
-			return arguments;
-		}
 	}
 }

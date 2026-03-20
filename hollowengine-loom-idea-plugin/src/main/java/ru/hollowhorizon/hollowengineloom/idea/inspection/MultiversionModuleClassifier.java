@@ -3,6 +3,7 @@ package ru.hollowhorizon.hollowengineloom.idea.inspection;
 import java.nio.file.Path;
 import java.util.Properties;
 
+import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.module.Module;
 
 final class MultiversionModuleClassifier {
@@ -18,9 +19,9 @@ final class MultiversionModuleClassifier {
 
 		if (metadata != null && metadata.mode != null) {
 			return switch (metadata.mode) {
-			case "COMMON" -> ModuleMode.common(metadata.availableVersions);
-			case "TARGET" -> ModuleMode.target(metadata.targetVersion, metadata.availableVersions);
-			default -> ModuleMode.none();
+				case "COMMON" -> ModuleMode.common(metadata.availableVersions);
+				case "TARGET" -> ModuleMode.target(metadata.targetVersion, metadata.availableVersions);
+				default -> ModuleMode.none();
 			};
 		}
 
@@ -28,11 +29,9 @@ final class MultiversionModuleClassifier {
 	}
 
 	private static ModuleMode detectModeFallback(Module module) {
-		final Path moduleDir = ProjectVersionResolver.moduleDirectory(module);
-
-		if (moduleDir == null) {
-			return ModuleMode.none();
-		}
+		final String path = ExternalSystemApiUtil.getExternalProjectPath(module);
+		if (path == null) return ModuleMode.none();
+		final Path moduleDir = Path.of(path);
 
 		final Path groovyBuildFile = moduleDir.resolve("build.gradle");
 		final Path kotlinBuildFile = moduleDir.resolve("build.gradle.kts");
@@ -54,7 +53,14 @@ final class MultiversionModuleClassifier {
 			return ModuleMode.common(null);
 		}
 
+
 		return ModuleMode.none();
+	}
+
+	enum Kind {
+		NONE,
+		COMMON,
+		TARGET
 	}
 
 	record ModuleMode(Kind kind, String targetVersion, java.util.List<String> availableVersions) {
@@ -69,11 +75,5 @@ final class MultiversionModuleClassifier {
 		static ModuleMode target(String targetVersion, java.util.List<String> availableVersions) {
 			return new ModuleMode(Kind.TARGET, targetVersion, availableVersions);
 		}
-	}
-
-	enum Kind {
-		NONE,
-		COMMON,
-		TARGET
 	}
 }

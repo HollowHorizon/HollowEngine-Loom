@@ -72,6 +72,10 @@ public final class MultiversionApiUsageValidator {
 	private final BitSet allVersions;
 
 	public MultiversionApiUsageValidator(MultiversionApiMetadata metadata, String constantsClassName) {
+		this(metadata, constantsClassName, null);
+	}
+
+	public MultiversionApiUsageValidator(MultiversionApiMetadata metadata, String constantsClassName, String targetVersion) {
 		this.metadata = metadata;
 		this.constantsClassInternalName = constantsClassName.replace('.', '/');
 		this.availableVersions = metadata.availableVersions().stream()
@@ -86,8 +90,12 @@ public final class MultiversionApiUsageValidator {
 			packedVersions.put(version, MultiversionConstantsGenerator.VersionParts.parse(version).packed());
 		}
 
-		this.allVersions = new BitSet(availableVersions.size());
-		this.allVersions.set(0, availableVersions.size());
+		if (targetVersion != null && !targetVersion.isBlank()) {
+			this.allVersions = maskForVersions(List.of(targetVersion));
+		} else {
+			this.allVersions = new BitSet(availableVersions.size());
+			this.allVersions.set(0, availableVersions.size());
+		}
 	}
 
 	public List<String> validateDirectories(Iterable<Path> directories) throws IOException {

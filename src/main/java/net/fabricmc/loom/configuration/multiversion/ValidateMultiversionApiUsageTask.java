@@ -34,6 +34,7 @@ import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFiles;
+import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
 
@@ -45,8 +46,15 @@ public abstract class ValidateMultiversionApiUsageTask extends AbstractLoomTask 
 	@Input
 	public abstract Property<String> getConstantsClass();
 
+	@Input
+	@Optional
+	public abstract Property<String> getTargetVersion();
+
 	@InputFiles
 	public abstract ConfigurableFileCollection getClassesDirectories();
+
+	@InputFiles
+	public abstract ConfigurableFileCollection getAdditionalMetadataDirectories();
 
 	@InputFiles
 	public abstract RegularFileProperty getStubJar();
@@ -57,11 +65,18 @@ public abstract class ValidateMultiversionApiUsageTask extends AbstractLoomTask 
 	@TaskAction
 	public void validate() throws IOException {
 		final MultiversionApiMetadata metadata = LoomGradlePlugin.GSON.fromJson(new String(ZipUtils.unpack(getStubJar().get().getAsFile().toPath(), MultiversionApiMetadata.PATH)), MultiversionApiMetadata.class);
-		final List<String> violations = new MultiversionApiUsageValidator(metadata, getConstantsClass().get())
+		final MultiversionApiMetadata mergedMetadata = new MultiversionRequiresApiMetadataCollector().merge(
+				metadata,
+				new MultiversionRequiresApiMetadataCollector().collect(
+						getAdditionalMetadataDirectories().getFiles().stream().map(java.io.File::toPath).toList(),
+						metadata.availableVersions()
+				)
+		);
+		final List<String> mergedViolations = new MultiversionApiUsageValidator(mergedMetadata, getConstantsClass().get(), getTargetVersion().getOrNull())
 				.validateDirectories(getClassesDirectories().getFiles().stream().map(java.io.File::toPath).toList());
 
-		if (!violations.isEmpty()) {
-			throw new GradleException("Invalid multiversion API usage:\n - " + String.join("\n - ", violations));
+		if (!mergedViolations.isEmpty()) {
+			throw new GradleException("Invalid multiversion API usage:\n - " + String.join("\n - ", mergedViolations));
 		}
 
 		Files.createDirectories(getMarkerFile().get().getAsFile().toPath().getParent());

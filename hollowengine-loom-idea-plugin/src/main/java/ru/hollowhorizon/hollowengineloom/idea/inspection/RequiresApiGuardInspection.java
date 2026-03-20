@@ -105,15 +105,27 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 	}
 
 	private static Set<Integer> collectRequiredVersions(PsiModifierListOwner target) {
-		Set<Integer> versions = intersect(null, MultiversionMetadataResolver.resolveVersions(target, target.getProject()));
-		versions = intersectWithAnnotation(versions, target);
+		Set<Integer> versions = intersect(null, resolveSymbolVersions(target));
 
 		if (target instanceof PsiMember member) {
-			versions = intersect(versions, MultiversionMetadataResolver.resolveVersions(member.getContainingClass(), target.getProject()));
-			versions = intersectWithAnnotation(versions, member.getContainingClass());
+			versions = intersect(versions, resolveSymbolVersions(member.getContainingClass()));
 		}
 
 		return versions == null ? Set.of() : versions;
+	}
+
+	private static Set<Integer> resolveSymbolVersions(PsiModifierListOwner owner) {
+		if (owner == null) {
+			return Set.of();
+		}
+
+		final Set<Integer> sourceVersions = RequiresApiInspectionSupport.resolveDirectRequiresApi(owner);
+
+		if (!sourceVersions.isEmpty() || RequiresApiInspectionSupport.isProjectSource(owner)) {
+			return sourceVersions;
+		}
+
+		return MultiversionMetadataResolver.resolveVersions(owner, owner.getProject());
 	}
 
 	private static Set<Integer> collectContextVersions(PsiElement usage) {
@@ -264,7 +276,7 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 			return current;
 		}
 
-		final Set<Integer> annotationVersions = readAnnotationVersions(annotation);
+		final Set<Integer> annotationVersions = RequiresApiAnnotationReader.readJavaAnnotationVersions(annotation);
 		return intersect(current, annotationVersions);
 	}
 
@@ -280,27 +292,6 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 		final Set<Integer> intersection = new LinkedHashSet<>(left);
 		intersection.retainAll(right);
 		return intersection;
-	}
-
-	private static Set<Integer> readAnnotationVersions(PsiAnnotation annotation) {
-		final PsiAnnotationMemberValue value = annotation.findDeclaredAttributeValue("value");
-		final Set<Integer> versions = new LinkedHashSet<>();
-
-		if (value instanceof PsiArrayInitializerMemberValue arrayValue) {
-			for (PsiAnnotationMemberValue initializer : arrayValue.getInitializers()) {
-				addVersion(initializer, versions);
-			}
-		} else if (value != null) {
-			addVersion(value, versions);
-		}
-
-		return versions;
-	}
-
-	private static void addVersion(PsiAnnotationMemberValue annotationValue, Set<Integer> versions) {
-		if (annotationValue instanceof PsiLiteralExpression literalExpression && literalExpression.getValue() instanceof String stringValue) {
-			versions.add(RequiresApiInspectionSupport.packVersion(stringValue));
-		}
 	}
 
 	private static final class JavaTokenSets {

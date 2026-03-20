@@ -78,7 +78,16 @@ public abstract class MultiversionConfiguration implements Runnable {
 		});
 
 		final var validateApiUsage = getTasks().register("validateMultiversionApiUsage", ValidateMultiversionApiUsageTask.class, task -> {
-			task.getConstantsClass().set(project.provider(() -> MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get()));
+			task.getConstantsClass().set(project.provider(() -> {
+				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
+				return target.isConfigured()
+						? target.getConstantsClass().get()
+						: MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get();
+			}));
+			task.getTargetVersion().set(project.provider(() -> {
+				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
+				return target.isConfigured() ? target.getMinecraftVersion().getOrNull() : null;
+			}));
 			task.getClassesDirectories().from(mainSourceSet.getOutput().getClassesDirs());
 			task.getStubJar().set(generateStub.flatMap(GenerateMultiversionStubTask::getStubJar));
 			task.getMarkerFile().set(project.getLayout().getBuildDirectory().file("loom-cache/validateMultiversionApiUsage.ok"));
@@ -116,7 +125,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 
 			if (target.isConfigured()) {
 				configureGeneratedConstantsSourceSet(generateConstants);
-				configureSharedProjectConsumption();
+				configureSharedProjectConsumption(validateApiUsage);
 			} else {
 				project.getDependencies().add(JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, project.files(stubJar));
 			}
@@ -135,9 +144,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 			final String name = task.getName();
 
 			if (name.startsWith("compile") && (name.endsWith("Java") || name.endsWith("Kotlin"))) {
-				if (!target.isConfigured()) {
-					task.dependsOn(generateStub);
-				}
+				task.dependsOn(generateStub);
 
 				if (target.isConfigured()) {
 					task.dependsOn(generateConstants);
@@ -145,14 +152,12 @@ public abstract class MultiversionConfiguration implements Runnable {
 			}
 		});
 
-		if (!target.isConfigured()) {
-			final String mainJavaCompileTaskName = mainSourceSet.getCompileJavaTaskName();
-			validateApiUsage.configure(task -> task.dependsOn(getTasks().matching(candidate -> {
-				final String name = candidate.getName();
-				return mainJavaCompileTaskName.equals(name) || "compileKotlin".equals(name);
-			})));
-			getTasks().named(JavaPlugin.CLASSES_TASK_NAME).configure(task -> task.dependsOn(validateApiUsage));
-		}
+		final String mainJavaCompileTaskName = mainSourceSet.getCompileJavaTaskName();
+		validateApiUsage.configure(task -> task.dependsOn(getTasks().matching(candidate -> {
+			final String name = candidate.getName();
+			return mainJavaCompileTaskName.equals(name) || "compileKotlin".equals(name);
+		})));
+		getTasks().named(JavaPlugin.CLASSES_TASK_NAME).configure(task -> task.dependsOn(validateApiUsage));
 	}
 
 	private void configureIdeaSync(org.gradle.api.tasks.TaskProvider<GenerateMultiversionStubTask> generateStub, org.gradle.api.tasks.TaskProvider<GenerateMultiversionConstantsTask> generateConstants, org.gradle.api.tasks.TaskProvider<GenerateMultiversionIdeaMetadataTask> generateIdeaMetadata) {
@@ -175,7 +180,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 		});
 	}
 
-	private void configureSharedProjectConsumption() {
+	private void configureSharedProjectConsumption(org.gradle.api.tasks.TaskProvider<ValidateMultiversionApiUsageTask> validateApiUsage) {
 		final Set<Project> sharedProjects = new LinkedHashSet<>();
 
 		for (String configurationName : List.of(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, JavaPlugin.API_CONFIGURATION_NAME)) {
@@ -204,21 +209,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 
 		for (Project sharedProject : sharedProjects) {
 			preparedOutputs.put(sharedProject, registerPreparedSharedOutput(sharedProject, targetVersion));
-		}
-
-		for (String configurationName : List.of(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, JavaPlugin.API_CONFIGURATION_NAME, JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, JavaPlugin.RUNTIME_ONLY_CONFIGURATION_NAME)) {
-			final Configuration configuration = getProject().getConfigurations().findByName(configurationName);
-
-			if (configuration == null) {
-				continue;
-			}
-
-			configuration.getDependencies().removeIf(dependency -> dependency instanceof ProjectDependency projectDependency && sharedProjects.contains(projectDependency.getDependencyProject()));
-		}
-
-		for (Project sharedProject : sharedProjects) {
-			final var preparedOutput = preparedOutputs.get(sharedProject);
-			getProject().getDependencies().add(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, getProject().files(preparedOutput.flatMap(PrepareMultiversionSharedOutputTask::getOutputDirectory)));
+			validateApiUsage.configure(task -> task.getAdditionalMetadataDirectories().from(SourceSetHelper.getMainSourceSet(sharedProject).getOutput().getClassesDirs()));
 		}
 
 		getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class).configure(task -> {

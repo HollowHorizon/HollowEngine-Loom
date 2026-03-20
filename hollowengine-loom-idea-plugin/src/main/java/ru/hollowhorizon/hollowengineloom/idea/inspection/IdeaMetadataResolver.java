@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.google.gson.Gson;
+import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.module.Module;
 
 final class IdeaMetadataResolver {
@@ -28,11 +29,9 @@ final class IdeaMetadataResolver {
 	}
 
 	private static IdeaMultiversionMetadata load(Module module) {
-		final Path moduleDir = ProjectVersionResolver.moduleDirectory(module);
-
-		if (moduleDir == null) {
-			return null;
-		}
+		final String path = ExternalSystemApiUtil.getExternalProjectPath(module);
+		if (path == null) return null;
+		final Path moduleDir = Path.of(path);
 
 		final Path metadataPath = moduleDir.resolve(RELATIVE_PATH);
 
