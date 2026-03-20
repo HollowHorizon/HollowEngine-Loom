@@ -28,6 +28,10 @@
                 enabledByDefault="true"
                 level="ERROR"
                 implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.KotlinRequiresApiGuardInspection"/>
+        <completion.contributor language="any" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.MultiversionCompletionContributor"/>
+        <implicitUsageProvider implementation="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventImplicitUsageProvider"/>
+        <codeInsight.lineMarkerProvider language="JAVA" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider language="kotlin" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventLineMarkerProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="org.jetbrains.kotlin">

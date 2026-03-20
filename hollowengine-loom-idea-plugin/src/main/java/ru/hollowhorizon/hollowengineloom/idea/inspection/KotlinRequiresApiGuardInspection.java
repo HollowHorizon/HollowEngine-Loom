@@ -116,27 +116,13 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 	}
 
 	private static Set<Integer> collectRequiredVersions(PsiModifierListOwner target) {
-		Set<Integer> versions = intersect(null, resolveSymbolVersions(target));
+		Set<Integer> versions = intersect(null, RequiresApiInspectionSupport.resolveSymbolVersions(target));
 
 		if (target instanceof PsiMember member) {
-			versions = intersect(versions, resolveSymbolVersions(member.getContainingClass()));
+			versions = intersect(versions, RequiresApiInspectionSupport.resolveSymbolVersions(member.getContainingClass()));
 		}
 
 		return versions == null ? Set.of() : versions;
-	}
-
-	private static Set<Integer> resolveSymbolVersions(PsiModifierListOwner owner) {
-		if (owner == null) {
-			return Set.of();
-		}
-
-		final Set<Integer> sourceVersions = RequiresApiInspectionSupport.resolveDirectRequiresApi(owner);
-
-		if (!sourceVersions.isEmpty() || RequiresApiInspectionSupport.isProjectSource(owner)) {
-			return sourceVersions;
-		}
-
-		return MultiversionMetadataResolver.resolveVersions(owner, owner.getProject());
 	}
 
 	private static Set<Integer> collectContextVersions(PsiElement usage) {
@@ -280,7 +266,7 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 			return current;
 		}
 
-		final PsiAnnotation annotation = owner.getAnnotation(RequiresApiInspectionSupport.REQUIRES_API_FQN);
+		final PsiAnnotation annotation = owner.getAnnotation(HollowEngineConstants.REQUIRES_API_FQN);
 
 		if (annotation == null) {
 			return current;

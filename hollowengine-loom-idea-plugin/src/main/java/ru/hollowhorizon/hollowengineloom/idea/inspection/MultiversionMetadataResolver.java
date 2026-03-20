@@ -3,8 +3,11 @@ package ru.hollowhorizon.hollowengineloom.idea.inspection;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.google.gson.Gson;
 import com.intellij.openapi.project.Project;
@@ -27,6 +30,7 @@ import com.intellij.psi.util.ClassUtil;
 final class MultiversionMetadataResolver {
 	private static final Gson GSON = new Gson();
 	private static final String METADATA_PATH = "META-INF/loom/multiversion-api.json";
+	private static final Map<String, CachedMetadata> CACHE = new ConcurrentHashMap<>();
 
 	private MultiversionMetadataResolver() {
 	}
@@ -89,6 +93,26 @@ final class MultiversionMetadataResolver {
 	}
 
 	private static Set<String> resolveMetadata(Project project, java.util.function.Function<MultiversionApiMetadataModel, Set<String>> extractor) {
+		final MultiversionApiMetadataModel metadata = resolveMergedMetadata(project);
+		final Set<String> versions = extractor.apply(metadata);
+		return versions == null ? Set.of() : versions;
+	}
+
+	private static MultiversionApiMetadataModel resolveMergedMetadata(Project project) {
+		final long modificationCount = ProjectRootManager.getInstance(project).getModificationCount();
+		final String key = project.getLocationHash();
+		final CachedMetadata cached = CACHE.get(key);
+
+		if (cached != null && cached.modificationCount == modificationCount) {
+			return cached.metadata;
+		}
+
+		final MultiversionApiMetadataModel merged = new MultiversionApiMetadataModel();
+		merged.availableVersions = new LinkedHashSet<>();
+		merged.classes = new LinkedHashMap<>();
+		merged.methods = new LinkedHashMap<>();
+		merged.fields = new LinkedHashMap<>();
+
 		for (VirtualFile root : ProjectRootManager.getInstance(project).orderEntries().classes().getRoots()) {
 			final VirtualFile metadataFile = root.findFileByRelativePath(METADATA_PATH);
 
@@ -103,16 +127,27 @@ final class MultiversionMetadataResolver {
 					continue;
 				}
 
-				final Set<String> versions = extractor.apply(metadata);
+				if (metadata.availableVersions != null) {
+					merged.availableVersions.addAll(metadata.availableVersions);
+				}
 
-				if (versions != null && !versions.isEmpty()) {
-					return versions;
+				if (metadata.classes != null) {
+					merged.classes.putAll(metadata.classes);
+				}
+
+				if (metadata.methods != null) {
+					merged.methods.putAll(metadata.methods);
+				}
+
+				if (metadata.fields != null) {
+					merged.fields.putAll(metadata.fields);
 				}
 			} catch (IOException ignored) {
 			}
 		}
 
-		return Set.of();
+		CACHE.put(key, new CachedMetadata(modificationCount, merged));
+		return merged;
 	}
 
 	private static String methodKey(PsiClass ownerClass, PsiMethod method) {
@@ -187,4 +222,6 @@ final class MultiversionMetadataResolver {
 
 		return "L" + canonical.replace('.', '/').replace('$', '/') + ";";
 	}
+
+	private record CachedMetadata(long modificationCount, MultiversionApiMetadataModel metadata) { }
 }

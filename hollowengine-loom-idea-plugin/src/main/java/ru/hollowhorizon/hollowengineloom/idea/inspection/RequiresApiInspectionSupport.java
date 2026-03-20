@@ -17,7 +17,6 @@ import org.jetbrains.kotlin.psi.KtDeclaration;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
 
 final class RequiresApiInspectionSupport {
-	static final String REQUIRES_API_FQN = "multiversion.api.RequiresApi";
 	private static final String MESSAGE_PREFIX = "This API is version-gated by @RequiresApi";
 
 	private RequiresApiInspectionSupport() {
@@ -72,6 +71,20 @@ final class RequiresApiInspectionSupport {
 		return "This API is not available on target " + targetVersion + ". It is only available on " + sorted + ".";
 	}
 
+	static String buildCompletionHint(Set<Integer> requiredVersions, Set<Integer> projectVersions) {
+		final Set<Integer> displayVersions = new LinkedHashSet<>(requiredVersions);
+
+		if (!projectVersions.isEmpty()) {
+			displayVersions.retainAll(projectVersions);
+		}
+
+		final Set<Integer> versions = displayVersions.isEmpty() ? requiredVersions : displayVersions;
+		return versions.stream()
+				.sorted()
+				.map(RequiresApiInspectionSupport::formatVersion)
+				.collect(Collectors.joining(", "));
+	}
+
 	static Set<Integer> resolveDirectRequiresApi(PsiModifierListOwner owner) {
 		if (owner == null) {
 			return Set.of();
@@ -115,13 +128,50 @@ final class RequiresApiInspectionSupport {
 	}
 
 	private static void addJavaAnnotationVersions(PsiModifierListOwner owner, Set<Integer> versions) {
-		final var annotation = owner.getAnnotation(REQUIRES_API_FQN);
+		final var annotation = owner.getAnnotation(HollowEngineConstants.REQUIRES_API_FQN);
 
 		if (annotation == null) {
 			return;
 		}
 
 		versions.addAll(RequiresApiAnnotationReader.readJavaAnnotationVersions(annotation));
+	}
+
+	static Set<Integer> resolveSymbolVersions(PsiModifierListOwner owner) {
+		if (owner == null) {
+			return Set.of();
+		}
+
+		final Set<Integer> sourceVersions = resolveDirectRequiresApi(owner);
+
+		if (!sourceVersions.isEmpty() || isProjectSource(owner)) {
+			return sourceVersions;
+		}
+
+		return MultiversionMetadataResolver.resolveVersions(owner, owner.getProject());
+	}
+
+	static boolean hasSubscribeEvent(PsiModifierListOwner owner) {
+		if (owner == null) {
+			return false;
+		}
+
+		if (owner.getAnnotation(HollowEngineConstants.SUBSCRIBE_EVENT_FQN) != null) {
+			return true;
+		}
+
+		final PsiElement navigation = owner.getNavigationElement();
+
+		if (navigation instanceof PsiModifierListOwner navigationOwner && navigationOwner.getAnnotation(HollowEngineConstants.SUBSCRIBE_EVENT_FQN) != null) {
+			return true;
+		}
+
+		if (navigation instanceof KtDeclaration declaration) {
+			return declaration.getAnnotationEntries().stream()
+					.anyMatch(entry -> entry.getShortName() != null && "SubscribeEvent".equals(entry.getShortName().asString()));
+		}
+
+		return false;
 	}
 
 	private static void addKotlinAnnotationVersions(KtDeclaration declaration, Set<Integer> versions) {
