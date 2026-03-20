@@ -32,6 +32,14 @@ final class RequiresApiQuickFixSupport {
 				.collect(Collectors.joining(" || "));
 	}
 
+	static String buildKotlinGuardExpression(PsiElement context, Set<Integer> requiredVersions) {
+		final String constantsClass = resolveConstantsClass(context);
+		return requiredVersions.stream()
+				.sorted()
+				.map(version -> constantsClass + ".`is`(" + constantsClass + "." + versionFieldName(version) + ")")
+				.collect(Collectors.joining(" || "));
+	}
+
 	static String buildJavaAnnotationText(Set<Integer> requiredVersions) {
 		return "@%s({%s})".formatted(
 				HollowEngineConstants.REQUIRES_API_FQN,

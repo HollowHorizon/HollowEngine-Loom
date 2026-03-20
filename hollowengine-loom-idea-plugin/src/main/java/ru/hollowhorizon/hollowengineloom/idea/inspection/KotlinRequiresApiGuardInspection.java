@@ -199,7 +199,7 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 			return Set.of();
 		}
 
-		if (!(callExpression.getCalleeExpression() instanceof KtNameReferenceExpression selector) || !"is".equals(selector.getReferencedName())) {
+		if (!(callExpression.getCalleeExpression() instanceof KtNameReferenceExpression selector) || !isConstantsIsSelector(selector)) {
 			return Set.of();
 		}
 
@@ -209,6 +209,11 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 
 		final Integer packed = readPackedVersion(callExpression.getValueArguments().get(0).getArgumentExpression());
 		return packed == null ? Set.of() : Set.of(packed);
+	}
+
+	private static boolean isConstantsIsSelector(KtNameReferenceExpression selector) {
+		final String referencedName = selector.getReferencedName();
+		return "is".equals(referencedName) || "`is`".equals(selector.getText());
 	}
 
 	private static Set<Integer> resolveVersionEquality(KtBinaryExpression binaryExpression) {

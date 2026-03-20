@@ -35,7 +35,7 @@ public final class KotlinWrapWithRequiresApiGuardQuickFix implements LocalQuickF
 			return;
 		}
 
-		final String guard = RequiresApiQuickFixSupport.buildGuardExpression(expression, requiredVersions);
+		final String guard = RequiresApiQuickFixSupport.buildKotlinGuardExpression(expression, requiredVersions);
 		final KtPsiFactory factory = new KtPsiFactory(project);
 		final KtExpression wrapped = factory.createExpression("if (" + guard + ") {\n" + expression.getText() + "\n}");
 		expression.replace(wrapped);
