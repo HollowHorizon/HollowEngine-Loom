@@ -81,9 +81,11 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 	}
 
 	private static Set<Integer> collectRequiredVersions(PsiModifierListOwner target) {
-		Set<Integer> versions = intersectWithAnnotation(null, target);
+		Set<Integer> versions = intersect(null, MultiversionMetadataResolver.resolveVersions(target, target.getProject()));
+		versions = intersectWithAnnotation(versions, target);
 
 		if (target instanceof PsiMember member) {
+			versions = intersect(versions, MultiversionMetadataResolver.resolveVersions(member.getContainingClass(), target.getProject()));
 			versions = intersectWithAnnotation(versions, member.getContainingClass());
 		}
 

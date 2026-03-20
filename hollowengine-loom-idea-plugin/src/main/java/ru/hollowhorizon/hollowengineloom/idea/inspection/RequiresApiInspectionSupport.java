@@ -21,9 +21,12 @@ final class RequiresApiInspectionSupport {
 		}
 
 		final Project project = context.getProject();
-		return ProjectVersionResolver.resolve(project).stream()
+		final Set<Integer> versions = ProjectVersionResolver.resolve(project).stream()
 				.map(RequiresApiInspectionSupport::packVersion)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
+
+		versions.addAll(MultiversionMetadataResolver.resolveAvailableVersions(project));
+		return versions;
 	}
 
 	static boolean isAvailableEverywhere(Set<Integer> requiredVersions, Set<Integer> projectVersions) {

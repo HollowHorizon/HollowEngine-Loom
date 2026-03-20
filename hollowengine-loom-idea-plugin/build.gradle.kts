@@ -24,6 +24,8 @@ repositories {
 }
 
 dependencies {
+	implementation("com.google.code.gson:gson:2.13.1")
+
 	intellijPlatform {
 		create(platformType, platformVersion)
 		bundledPlugin("com.intellij.java")
@@ -46,7 +48,7 @@ intellijPlatform {
 			name = "HollowHorizon"
 		}
 		ideaVersion {
-			sinceBuild = "253"
+			sinceBuild = "242.21829"
 			untilBuild = "253.*"
 		}
 	}
@@ -63,7 +65,7 @@ tasks {
 	}
 
 	patchPluginXml {
-		sinceBuild.set("253")
+		sinceBuild.set("242.21829")
 		untilBuild.set("253.*")
 	}
 }

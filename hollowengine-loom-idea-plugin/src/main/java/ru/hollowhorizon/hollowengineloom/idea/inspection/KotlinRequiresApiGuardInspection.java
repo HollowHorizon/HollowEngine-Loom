@@ -92,9 +92,11 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 	}
 
 	private static Set<Integer> collectRequiredVersions(PsiModifierListOwner target) {
-		Set<Integer> versions = intersectWithJavaAnnotation(null, target);
+		Set<Integer> versions = intersect(null, MultiversionMetadataResolver.resolveVersions(target, target.getProject()));
+		versions = intersectWithJavaAnnotation(versions, target);
 
 		if (target instanceof PsiMember member) {
+			versions = intersect(versions, MultiversionMetadataResolver.resolveVersions(member.getContainingClass(), target.getProject()));
 			versions = intersectWithJavaAnnotation(versions, member.getContainingClass());
 		}
 
