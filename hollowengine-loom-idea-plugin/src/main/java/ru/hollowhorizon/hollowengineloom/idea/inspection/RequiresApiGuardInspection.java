@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Set;
 
 import com.intellij.codeInspection.AbstractBaseJavaLocalInspectionTool;
+import com.intellij.codeInspection.LocalQuickFix;
 import com.intellij.codeInspection.ProblemsHolder;
 import com.intellij.openapi.module.Module;
 import com.intellij.psi.JavaElementVisitor;
@@ -101,7 +102,18 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 			return;
 		}
 
-		holder.registerProblem(usage, RequiresApiInspectionSupport.buildMessage(requiredVersions));
+		holder.registerProblem(usage, RequiresApiInspectionSupport.buildMessage(requiredVersions), createQuickFixes(usage, requiredVersions));
+	}
+
+	private static LocalQuickFix[] createQuickFixes(PsiElement usage, Set<Integer> requiredVersions) {
+		final List<LocalQuickFix> fixes = new java.util.ArrayList<>();
+
+		if (RequiresApiQuickFixSupport.findJavaStatement(usage) != null) {
+			fixes.add(new JavaWrapWithRequiresApiGuardQuickFix(requiredVersions));
+		}
+
+		fixes.add(new JavaAnnotateWithRequiresApiQuickFix(requiredVersions));
+		return fixes.toArray(LocalQuickFix[]::new);
 	}
 
 	private static Set<Integer> collectRequiredVersions(PsiModifierListOwner target) {
@@ -246,6 +258,16 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 
 		if (unwrapped instanceof PsiLiteralExpression literalExpression && literalExpression.getValue() instanceof Integer integer) {
 			return integer;
+		}
+
+		if (unwrapped instanceof PsiReferenceExpression referenceExpression) {
+			final String name = referenceExpression.getReferenceName();
+
+			if (name != null && name.startsWith("V")) {
+				if (referenceExpression.getQualifierExpression() instanceof PsiReferenceExpression qualifier && "Constants".equals(qualifier.getReferenceName())) {
+					return RequiresApiInspectionSupport.packVersion(name.substring(1).replace('_', '.'));
+				}
+			}
 		}
 
 		return null;

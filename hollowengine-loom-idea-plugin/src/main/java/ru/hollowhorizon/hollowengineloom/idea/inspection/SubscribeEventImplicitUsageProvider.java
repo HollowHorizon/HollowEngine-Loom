@@ -6,12 +6,12 @@ import com.intellij.psi.PsiElement;
 public final class SubscribeEventImplicitUsageProvider implements ImplicitUsageProvider {
 	@Override
 	public boolean isImplicitUsage(PsiElement element) {
-		return SubscribeEventSupport.isSubscribeEventHandler(element);
+		return SubscribeEventSupport.isSubscribeEventHandler(element) || SubscribeEventSupport.isSubscribeEventParameter(element);
 	}
 
 	@Override
 	public boolean isImplicitRead(PsiElement element) {
-		return false;
+		return SubscribeEventSupport.isSubscribeEventParameter(element);
 	}
 
 	@Override

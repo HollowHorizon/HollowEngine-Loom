@@ -29,6 +29,7 @@ import java.nio.file.Path;
 
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFiles;
@@ -44,6 +45,12 @@ public abstract class PrepareMultiversionSharedOutputTask extends AbstractLoomTa
 	@Input
 	public abstract Property<String> getTargetVersion();
 
+	@Input
+	public abstract Property<String> getConstantsClass();
+
+	@Input
+	public abstract ListProperty<String> getAvailableVersions();
+
 	@OutputDirectory
 	public abstract DirectoryProperty getOutputDirectory();
 
@@ -53,7 +60,9 @@ public abstract class PrepareMultiversionSharedOutputTask extends AbstractLoomTa
 		new MultiversionSharedOutputStripper().stripDirectories(
 				getInputDirectories().getFiles().stream().map(java.io.File::toPath).toList(),
 				outputDirectory,
-				getTargetVersion().get()
+				getTargetVersion().get(),
+				getConstantsClass().get(),
+				getAvailableVersions().get()
 		);
 	}
 }

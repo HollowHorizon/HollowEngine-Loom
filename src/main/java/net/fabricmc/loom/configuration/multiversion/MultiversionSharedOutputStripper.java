@@ -43,8 +43,13 @@ public final class MultiversionSharedOutputStripper {
 	private static final String REQUIRES_API_DESCRIPTOR = "L" + MultiversionStubGenerator.REQUIRES_API_INTERNAL_NAME + ";";
 
 	public void stripDirectories(List<Path> inputDirectories, Path outputDirectory, String targetVersion) throws IOException {
+		stripDirectories(inputDirectories, outputDirectory, targetVersion, "multiversion.Constants", List.of(targetVersion));
+	}
+
+	public void stripDirectories(List<Path> inputDirectories, Path outputDirectory, String targetVersion, String constantsClassName, List<String> availableVersions) throws IOException {
 		deleteDirectory(outputDirectory);
 		Files.createDirectories(outputDirectory);
+		final MultiversionConstantsInliner inliner = new MultiversionConstantsInliner(constantsClassName, targetVersion, availableVersions);
 
 		for (Path inputDirectory : inputDirectories) {
 			if (inputDirectory == null || Files.notExists(inputDirectory)) {
@@ -60,7 +65,7 @@ public final class MultiversionSharedOutputStripper {
 						Files.createDirectories(outputPath.getParent());
 
 						if (path.toString().endsWith(".class")) {
-							writeStrippedClass(path, outputPath, targetVersion);
+							writeStrippedClass(path, outputPath, targetVersion, inliner);
 						} else {
 							Files.copy(path, outputPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 						}
@@ -72,7 +77,7 @@ public final class MultiversionSharedOutputStripper {
 		}
 	}
 
-	private void writeStrippedClass(Path inputPath, Path outputPath, String targetVersion) throws IOException {
+	private void writeStrippedClass(Path inputPath, Path outputPath, String targetVersion, MultiversionConstantsInliner inliner) throws IOException {
 		final ClassNode classNode = new ClassNode();
 		new ClassReader(Files.readAllBytes(inputPath)).accept(classNode, 0);
 
@@ -87,7 +92,7 @@ public final class MultiversionSharedOutputStripper {
 
 		final ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
 		classNode.accept(writer);
-		Files.write(outputPath, writer.toByteArray());
+		Files.write(outputPath, inliner.inline(writer.toByteArray()));
 	}
 
 	private void stripFields(List<FieldNode> fields, String targetVersion) {

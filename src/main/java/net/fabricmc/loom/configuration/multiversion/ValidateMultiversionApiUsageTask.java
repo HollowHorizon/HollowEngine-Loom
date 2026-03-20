@@ -37,6 +37,7 @@ import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
+import org.gradle.api.provider.ListProperty;
 
 import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.task.AbstractLoomTask;
@@ -56,7 +57,11 @@ public abstract class ValidateMultiversionApiUsageTask extends AbstractLoomTask 
 	@InputFiles
 	public abstract ConfigurableFileCollection getAdditionalMetadataDirectories();
 
+	@Input
+	public abstract ListProperty<String> getAvailableVersions();
+
 	@InputFiles
+	@Optional
 	public abstract RegularFileProperty getStubJar();
 
 	@OutputFile
@@ -64,7 +69,14 @@ public abstract class ValidateMultiversionApiUsageTask extends AbstractLoomTask 
 
 	@TaskAction
 	public void validate() throws IOException {
-		final MultiversionApiMetadata metadata = LoomGradlePlugin.GSON.fromJson(new String(ZipUtils.unpack(getStubJar().get().getAsFile().toPath(), MultiversionApiMetadata.PATH)), MultiversionApiMetadata.class);
+		final MultiversionApiMetadata metadata;
+
+		if (getStubJar().isPresent()) {
+			metadata = LoomGradlePlugin.GSON.fromJson(new String(ZipUtils.unpack(getStubJar().get().getAsFile().toPath(), MultiversionApiMetadata.PATH)), MultiversionApiMetadata.class);
+		} else {
+			metadata = MultiversionApiMetadata.builder(java.util.Set.copyOf(getAvailableVersions().get())).build();
+		}
+
 		final MultiversionApiMetadata mergedMetadata = new MultiversionRequiresApiMetadataCollector().merge(
 				metadata,
 				new MultiversionRequiresApiMetadataCollector().collect(

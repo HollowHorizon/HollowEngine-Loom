@@ -28,10 +28,44 @@
                 enabledByDefault="true"
                 level="ERROR"
                 implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.KotlinRequiresApiGuardInspection"/>
+        <localInspection
+                language="JAVA"
+                shortName="HollowEngineSubscribeEventSignature"
+                displayName="SubscribeEvent handlers must have a valid signature"
+                groupName="HollowEngine Loom"
+                enabledByDefault="true"
+                level="ERROR"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventSignatureInspection"/>
+        <localInspection
+                language="kotlin"
+                shortName="HollowEngineKotlinSubscribeEventSignature"
+                displayName="SubscribeEvent handlers must have a valid signature"
+                groupName="HollowEngine Loom"
+                enabledByDefault="true"
+                level="ERROR"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventSignatureInspection"/>
+        <localInspection
+                language="JAVA"
+                shortName="HollowPacketDirectionMismatch"
+                displayName="HollowPacket send direction must match packet target"
+                groupName="HollowEngine Loom"
+                enabledByDefault="true"
+                level="ERROR"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.HollowPacketDirectionInspection"/>
+        <localInspection
+                language="kotlin"
+                shortName="KotlinHollowPacketDirectionMismatch"
+                displayName="HollowPacket send direction must match packet target"
+                groupName="HollowEngine Loom"
+                enabledByDefault="true"
+                level="ERROR"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.HollowPacketDirectionInspection"/>
         <completion.contributor language="any" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.MultiversionCompletionContributor"/>
         <implicitUsageProvider implementation="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventImplicitUsageProvider"/>
         <codeInsight.lineMarkerProvider language="JAVA" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventLineMarkerProvider"/>
         <codeInsight.lineMarkerProvider language="kotlin" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider language="JAVA" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.HollowPacketLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider language="kotlin" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.HollowPacketLineMarkerProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="org.jetbrains.kotlin">

@@ -3,6 +3,7 @@ package ru.hollowhorizon.hollowengineloom.idea.inspection;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+import com.intellij.codeInspection.LocalQuickFix;
 import com.intellij.codeInspection.LocalInspectionTool;
 import com.intellij.codeInspection.ProblemsHolder;
 import com.intellij.openapi.module.Module;
@@ -94,7 +95,18 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 			return;
 		}
 
-		holder.registerProblem(usage, RequiresApiInspectionSupport.buildMessage(requiredVersions));
+		holder.registerProblem(usage, RequiresApiInspectionSupport.buildMessage(requiredVersions), createQuickFixes(usage, requiredVersions));
+	}
+
+	private static LocalQuickFix[] createQuickFixes(PsiElement usage, Set<Integer> requiredVersions) {
+		final java.util.List<LocalQuickFix> fixes = new java.util.ArrayList<>();
+
+		if (RequiresApiQuickFixSupport.findKotlinStatement(usage) != null) {
+			fixes.add(new KotlinWrapWithRequiresApiGuardQuickFix(requiredVersions));
+		}
+
+		fixes.add(new KotlinAnnotateWithRequiresApiQuickFix(requiredVersions));
+		return fixes.toArray(LocalQuickFix[]::new);
 	}
 
 	private static PsiModifierListOwner resolveTarget(KtExpression expression) {
@@ -242,6 +254,15 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 
 		if (unwrapped == null) {
 			return null;
+		}
+
+		if (unwrapped instanceof KtQualifiedExpression qualifiedExpression
+				&& qualifiedExpression.getReceiverExpression() instanceof KtNameReferenceExpression qualifier
+				&& "Constants".equals(qualifier.getReferencedName())
+				&& qualifiedExpression.getSelectorExpression() instanceof KtNameReferenceExpression selector
+				&& selector.getReferencedName() != null
+				&& selector.getReferencedName().startsWith("V")) {
+			return RequiresApiInspectionSupport.packVersion(selector.getReferencedName().substring(1).replace('_', '.'));
 		}
 
 		try {

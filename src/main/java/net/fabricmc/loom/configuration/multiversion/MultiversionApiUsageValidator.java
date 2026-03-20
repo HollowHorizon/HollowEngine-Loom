@@ -572,7 +572,26 @@ public final class MultiversionApiUsageValidator {
 		return constantIndex < 0 ? null : readIntConstant(instructions[constantIndex]);
 	}
 
-	private static Integer readIntConstant(AbstractInsnNode instruction) {
+	private Integer readIntConstant(AbstractInsnNode instruction) {
+		if (instruction instanceof FieldInsnNode fieldInsn
+				&& fieldInsn.getOpcode() == Opcodes.GETSTATIC
+				&& constantsClassInternalName.equals(fieldInsn.owner)
+				&& "I".equals(fieldInsn.desc)) {
+			if ("MINECRAFT_VERSION".equals(fieldInsn.name) || "MINECRAFT".equals(fieldInsn.name)) {
+				return null;
+			}
+
+			if ("MC_MAJOR".equals(fieldInsn.name) || "MC_MINOR".equals(fieldInsn.name) || "MC_PATCH".equals(fieldInsn.name)) {
+				return null;
+			}
+
+			for (String version : availableVersions) {
+				if (("V" + version.replaceAll("[^A-Za-z0-9]", "_")).equals(fieldInsn.name)) {
+					return packedVersions.get(version);
+				}
+			}
+		}
+
 		return switch (instruction.getOpcode()) {
 		case Opcodes.ICONST_M1 -> -1;
 		case Opcodes.ICONST_0 -> 0;
@@ -590,7 +609,7 @@ public final class MultiversionApiUsageValidator {
 		return instruction instanceof FieldInsnNode fieldInsn
 				&& fieldInsn.getOpcode() == Opcodes.GETSTATIC
 				&& constantsClassInternalName.equals(fieldInsn.owner)
-				&& "MINECRAFT_VERSION".equals(fieldInsn.name)
+				&& ("MINECRAFT_VERSION".equals(fieldInsn.name) || "MINECRAFT".equals(fieldInsn.name))
 				&& "I".equals(fieldInsn.desc);
 	}
 

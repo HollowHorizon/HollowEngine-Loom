@@ -70,7 +70,7 @@ public final class MultiversionStubGenerator {
 
 	private MultiversionApiMetadata writeClasses(MultiversionCollector collector, Path outputDir, String constantsClassName) throws IOException {
 		writeRequiresApi(outputDir);
-		writeConstantsClass(outputDir, constantsClassName);
+		writeConstantsClass(outputDir, constantsClassName, collector.getAllVersions());
 		final MultiversionApiMetadata.Builder metadata = MultiversionApiMetadata.builder(collector.getAllVersions());
 
 		for (MultiversionClassInfo classInfo : collector.getClasses().values()) {
@@ -114,16 +114,21 @@ public final class MultiversionStubGenerator {
 		Files.write(output, writer.toByteArray());
 	}
 
-	private void writeConstantsClass(Path outputDir, String constantsClassName) throws IOException {
+	private void writeConstantsClass(Path outputDir, String constantsClassName, Iterable<String> versions) throws IOException {
 		final String internalName = constantsClassName.replace('.', '/');
 		final ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
 		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, internalName, null, "java/lang/Object", null);
 
 		writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "MINECRAFT_VERSION_NAME", "Ljava/lang/String;", null, null).visitEnd();
 		writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "MINECRAFT_VERSION", "I", null, null).visitEnd();
+		writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "MINECRAFT", "I", null, null).visitEnd();
 		writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "MC_MAJOR", "I", null, null).visitEnd();
 		writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "MC_MINOR", "I", null, null).visitEnd();
 		writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "MC_PATCH", "I", null, null).visitEnd();
+
+		for (String version : versions) {
+			writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, versionFieldName(version), "I", null, null).visitEnd();
+		}
 
 		MethodVisitor visitor = writer.visitMethod(Opcodes.ACC_PRIVATE, "<init>", "()V", null, null);
 		visitor.visitCode();
@@ -165,6 +170,7 @@ public final class MultiversionStubGenerator {
 	private void writeClass(Path outputDir, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) throws IOException {
 		final ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
 		writer.visit(Opcodes.V17, classInfo.getAccess(), classInfo.getName(), null, classInfo.getSuperName() == null ? "java/lang/Object" : classInfo.getSuperName(), classInfo.getInterfaces().toArray(String[]::new));
+		writeInnerClassEntries(writer, classInfo.getName());
 		writeRequiresApiAnnotation(writer.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), classInfo.getVersions());
 
 		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
@@ -234,7 +240,7 @@ public final class MultiversionStubGenerator {
 	}
 
 	private void writeSources(MultiversionCollector collector, Path outputDir, String constantsClassName) throws IOException {
-		writeConstantsSource(outputDir, constantsClassName);
+		writeConstantsSource(outputDir, constantsClassName, collector.getAllVersions());
 
 		for (MultiversionClassInfo classInfo : collector.getClasses().values()) {
 			final Path output = outputDir.resolve(classInfo.getName() + ".java");
@@ -243,13 +249,13 @@ public final class MultiversionStubGenerator {
 		}
 	}
 
-	private void writeConstantsSource(Path outputDir, String constantsClassName) throws IOException {
+	private void writeConstantsSource(Path outputDir, String constantsClassName, Iterable<String> versions) throws IOException {
 		final Path output = outputDir.resolve(constantsClassName.replace('.', '/') + ".java");
 		Files.createDirectories(output.getParent());
-		Files.writeString(output, toConstantsSource(constantsClassName), StandardCharsets.UTF_8);
+		Files.writeString(output, toConstantsSource(constantsClassName, versions), StandardCharsets.UTF_8);
 	}
 
-	private String toConstantsSource(String constantsClassName) {
+	private String toConstantsSource(String constantsClassName, Iterable<String> versions) {
 		final StringWriter writer = new StringWriter();
 		final int packageSeparator = constantsClassName.lastIndexOf('.');
 		final String packageName = packageSeparator >= 0 ? constantsClassName.substring(0, packageSeparator) : "";
@@ -262,9 +268,16 @@ public final class MultiversionStubGenerator {
 		writer.append("public final class ").append(simpleName).append(" {\n");
 		writer.append("\tpublic static String MINECRAFT_VERSION_NAME;\n");
 		writer.append("\tpublic static int MINECRAFT_VERSION;\n");
+		writer.append("\tpublic static int MINECRAFT;\n");
 		writer.append("\tpublic static int MC_MAJOR;\n");
 		writer.append("\tpublic static int MC_MINOR;\n");
 		writer.append("\tpublic static int MC_PATCH;\n\n");
+
+		for (String version : versions) {
+			writer.append("\tpublic static int ").append(versionFieldName(version)).append(";\n");
+		}
+
+		writer.append("\n");
 		writer.append("\tprivate ").append(simpleName).append("() {\n\t}\n\n");
 		writer.append("\tpublic static boolean is(int version) {\n\t\treturn MINECRAFT_VERSION == version;\n\t}\n\n");
 		writer.append("\tpublic static boolean isAtLeast(int version) {\n\t\treturn MINECRAFT_VERSION >= version;\n\t}\n\n");
@@ -276,7 +289,8 @@ public final class MultiversionStubGenerator {
 	private String toJavaSource(MultiversionClassInfo classInfo) {
 		final StringWriter writer = new StringWriter();
 		final int packageSeparator = classInfo.getName().lastIndexOf('/');
-		final String simpleName = packageSeparator >= 0 ? classInfo.getName().substring(packageSeparator + 1) : classInfo.getName();
+		final String rawSimpleName = packageSeparator >= 0 ? classInfo.getName().substring(packageSeparator + 1) : classInfo.getName();
+		final String simpleName = rawSimpleName.contains("$") ? rawSimpleName.substring(rawSimpleName.lastIndexOf('$') + 1) : rawSimpleName;
 
 		if (packageSeparator >= 0) {
 			writer.append("package ").append(classInfo.getName().substring(0, packageSeparator).replace('/', '.')).append(";\n\n");
@@ -345,9 +359,25 @@ public final class MultiversionStubGenerator {
 		case Type.LONG -> "long";
 		case Type.DOUBLE -> "double";
 		case Type.ARRAY -> toJavaType(type.getElementType()) + "[]".repeat(type.getDimensions());
-		case Type.OBJECT -> type.getClassName();
+		case Type.OBJECT -> type.getClassName().replace('$', '.');
 		default -> "java.lang.Object";
 		};
+	}
+
+	private static String versionFieldName(String version) {
+		return "V" + version.replaceAll("[^A-Za-z0-9]", "_");
+	}
+
+	private static void writeInnerClassEntries(ClassWriter writer, String internalName) {
+		int separator = internalName.lastIndexOf('$');
+
+		while (separator > 0) {
+			final String outerName = internalName.substring(0, separator);
+			final String innerName = internalName.substring(separator + 1);
+			writer.visitInnerClass(internalName, outerName, innerName, Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC);
+			internalName = outerName;
+			separator = internalName.lastIndexOf('$');
+		}
 	}
 
 	private static void writeRequiresApiAnnotation(AnnotationVisitor visitor, Iterable<String> versions) {

@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.OutputDirectory;
@@ -42,12 +43,15 @@ public abstract class GenerateMultiversionConstantsTask extends AbstractLoomTask
 	@Input
 	public abstract Property<String> getConstantsClass();
 
+	@Input
+	public abstract ListProperty<String> getAvailableVersions();
+
 	@OutputDirectory
 	public abstract DirectoryProperty getOutputDirectory();
 
 	@TaskAction
 	public void generate() throws IOException {
 		final Path outputDirectory = getOutputDirectory().get().getAsFile().toPath();
-		new MultiversionConstantsGenerator().write(outputDirectory, getConstantsClass().get(), getMinecraftVersion().get());
+		new MultiversionConstantsGenerator().write(outputDirectory, getConstantsClass().get(), getMinecraftVersion().get(), getAvailableVersions().get());
 	}
 }

@@ -29,5 +29,6 @@ import org.gradle.api.provider.Property;
 public interface MultiversionTargetAPI {
 	Property<String> getMinecraftVersion();
 
+	@Deprecated(forRemoval = true)
 	Property<String> getConstantsClass();
 }

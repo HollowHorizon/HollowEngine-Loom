@@ -44,6 +44,7 @@ import org.gradle.jvm.tasks.Jar;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.task.AbstractRunTask;
+import net.fabricmc.loom.task.RemapTaskConfiguration;
 import net.fabricmc.loom.util.gradle.GradleUtils;
 import net.fabricmc.loom.util.gradle.SourceSetHelper;
 
@@ -73,24 +74,29 @@ public abstract class MultiversionConfiguration implements Runnable {
 
 		final var generateConstants = getTasks().register("generateMultiversionConstants", GenerateMultiversionConstantsTask.class, task -> {
 			task.getMinecraftVersion().set(project.provider(() -> ((MultiversionTarget) extension.getMultiversionTarget()).getMinecraftVersion().getOrElse("")));
-			task.getConstantsClass().set(project.provider(() -> ((MultiversionTarget) extension.getMultiversionTarget()).getConstantsClass().get()));
+			task.getConstantsClass().set(project.provider(() -> MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get()));
+			task.getAvailableVersions().set(project.provider(() -> MultiversionSupport.resolveVersionMappings(project).keySet().stream().sorted().toList()));
 			task.getOutputDirectory().set(project.getLayout().getBuildDirectory().dir("generated/sources/loomMultiversion/constants"));
 		});
 
 		final var validateApiUsage = getTasks().register("validateMultiversionApiUsage", ValidateMultiversionApiUsageTask.class, task -> {
 			task.getConstantsClass().set(project.provider(() -> {
-				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
-				return target.isConfigured()
-						? target.getConstantsClass().get()
-						: MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get();
+				return MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get();
 			}));
+			task.getAvailableVersions().set(project.provider(() -> MultiversionSupport.resolveVersionMappings(project).keySet().stream().sorted().toList()));
 			task.getTargetVersion().set(project.provider(() -> {
 				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
 				return target.isConfigured() ? target.getMinecraftVersion().getOrNull() : null;
 			}));
 			task.getClassesDirectories().from(mainSourceSet.getOutput().getClassesDirs());
-			task.getStubJar().set(generateStub.flatMap(GenerateMultiversionStubTask::getStubJar));
 			task.getMarkerFile().set(project.getLayout().getBuildDirectory().file("loom-cache/validateMultiversionApiUsage.ok"));
+		});
+
+		final var optimizeConstants = getTasks().register("optimizeMultiversionConstants", OptimizeMultiversionConstantsTask.class, task -> {
+			task.getTargetVersion().set(project.provider(() -> ((MultiversionTarget) extension.getMultiversionTarget()).getMinecraftVersion().getOrElse("")));
+			task.getConstantsClass().set(project.provider(() -> MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get()));
+			task.getAvailableVersions().set(project.provider(() -> MultiversionSupport.resolveVersionMappings(project).keySet().stream().sorted().toList()));
+			task.getClassesDirectories().from(mainSourceSet.getOutput().getClassesDirs());
 		});
 
 		final var generateIdeaMetadata = getTasks().register("generateMultiversionIdeaMetadata", GenerateMultiversionIdeaMetadataTask.class, task -> {
@@ -103,10 +109,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 				return target.isConfigured() ? target.getMinecraftVersion().getOrNull() : null;
 			}));
 			task.getConstantsClass().set(project.provider(() -> {
-				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
-				return target.isConfigured()
-						? target.getConstantsClass().get()
-						: MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get();
+				return MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get();
 			}));
 			task.getVersionMappings().set(project.provider(() -> MultiversionSupport.resolveVersionMappings(project)));
 			task.getOutputFile().set(project.getLayout().getBuildDirectory().file(MultiversionIdeaMetadata.RELATIVE_PATH));
@@ -119,14 +122,25 @@ public abstract class MultiversionConfiguration implements Runnable {
 
 			final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
 			final var stubJar = generateStub.flatMap(GenerateMultiversionStubTask::getStubJar);
+			final String globalConstantsClass = MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get();
 
-			configureCompileTasks(mainSourceSet, generateStub, generateConstants, validateApiUsage);
+			if (target.getConstantsClass().isPresent() && !globalConstantsClass.equals(target.getConstantsClass().get())) {
+				throw new IllegalStateException("multiversionTarget.constantsClass must match loom.multiversion.constantsClass. Configure it only in loom.multiversion.");
+			}
+
+			if (!target.isConfigured()) {
+				validateApiUsage.configure(task -> task.getStubJar().set(generateStub.flatMap(GenerateMultiversionStubTask::getStubJar)));
+			}
+
+			configureCompileTasks(mainSourceSet, generateStub, generateConstants, validateApiUsage, optimizeConstants);
 			configureIdeaSync(generateStub, generateConstants, generateIdeaMetadata);
 
 			if (target.isConfigured()) {
 				configureGeneratedConstantsSourceSet(generateConstants);
 				configureSharedProjectConsumption(validateApiUsage);
+				configureTargetLaunchAliases(target);
 			} else {
+				disableCommonRemapTasks();
 				project.getDependencies().add(JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, project.files(stubJar));
 			}
 		});
@@ -137,26 +151,28 @@ public abstract class MultiversionConfiguration implements Runnable {
 		main.getJava().srcDir(generateConstants.flatMap(GenerateMultiversionConstantsTask::getOutputDirectory));
 	}
 
-	private void configureCompileTasks(SourceSet mainSourceSet, org.gradle.api.tasks.TaskProvider<GenerateMultiversionStubTask> generateStub, org.gradle.api.tasks.TaskProvider<GenerateMultiversionConstantsTask> generateConstants, org.gradle.api.tasks.TaskProvider<ValidateMultiversionApiUsageTask> validateApiUsage) {
+	private void configureCompileTasks(SourceSet mainSourceSet, org.gradle.api.tasks.TaskProvider<GenerateMultiversionStubTask> generateStub, org.gradle.api.tasks.TaskProvider<GenerateMultiversionConstantsTask> generateConstants, org.gradle.api.tasks.TaskProvider<ValidateMultiversionApiUsageTask> validateApiUsage, org.gradle.api.tasks.TaskProvider<OptimizeMultiversionConstantsTask> optimizeConstants) {
 		final MultiversionTarget target = (MultiversionTarget) LoomGradleExtension.get(getProject()).getMultiversionTarget();
 
 		getTasks().configureEach(task -> {
 			final String name = task.getName();
 
 			if (name.startsWith("compile") && (name.endsWith("Java") || name.endsWith("Kotlin"))) {
-				task.dependsOn(generateStub);
-
 				if (target.isConfigured()) {
 					task.dependsOn(generateConstants);
+				} else {
+					task.dependsOn(generateStub);
 				}
 			}
 		});
 
 		final String mainJavaCompileTaskName = mainSourceSet.getCompileJavaTaskName();
-		validateApiUsage.configure(task -> task.dependsOn(getTasks().matching(candidate -> {
+		final var compileTasks = getTasks().matching(candidate -> {
 			final String name = candidate.getName();
 			return mainJavaCompileTaskName.equals(name) || "compileKotlin".equals(name);
-		})));
+		});
+		optimizeConstants.configure(task -> task.dependsOn(compileTasks));
+		validateApiUsage.configure(task -> task.dependsOn(target.isConfigured() ? optimizeConstants : compileTasks));
 		getTasks().named(JavaPlugin.CLASSES_TASK_NAME).configure(task -> task.dependsOn(validateApiUsage));
 	}
 
@@ -255,6 +271,8 @@ public abstract class MultiversionConfiguration implements Runnable {
 		return getTasks().register(taskName, PrepareMultiversionSharedOutputTask.class, task -> {
 			task.dependsOn(sharedProject.getTasks().named(JavaPlugin.CLASSES_TASK_NAME));
 			task.getTargetVersion().set(targetVersion);
+			task.getConstantsClass().set(MultiversionSupport.getConfiguredExtension(getProject()).getConstantsClass());
+			task.getAvailableVersions().set(getProject().provider(() -> MultiversionSupport.resolveVersionMappings(getProject()).keySet().stream().sorted().toList()));
 			task.getInputDirectories().from(sharedMainSourceSet.getOutput().getClassesDirs());
 			task.getInputDirectories().from(sharedProject.provider(() -> {
 				final File resourcesDir = sharedMainSourceSet.getOutput().getResourcesDir();
@@ -262,6 +280,31 @@ public abstract class MultiversionConfiguration implements Runnable {
 			}));
 			task.getOutputDirectory().set(getProject().getLayout().getBuildDirectory().dir("loom-cache/prepared-shared/" + sharedTaskSuffix(sharedProject).toLowerCase(Locale.ROOT) + "/" + targetVersion));
 		});
+	}
+
+	private void disableCommonRemapTasks() {
+		for (String taskName : List.of(RemapTaskConfiguration.REMAP_JAR_TASK_NAME, RemapTaskConfiguration.REMAP_SOURCES_JAR_TASK_NAME)) {
+			getTasks().matching(task -> taskName.equals(task.getName())).configureEach(task -> task.setEnabled(false));
+		}
+	}
+
+	private void configureTargetLaunchAliases(MultiversionTarget target) {
+		final String suffix = versionTaskSuffix(target.getMinecraftVersion().get());
+		final Project rootProject = getProject().getRootProject();
+		registerRootAliasTask(rootProject, "configureClientLaunch" + suffix, getProject().getPath() + ":configureClientLaunch");
+		registerRootAliasTask(rootProject, "runClient" + suffix, getProject().getPath() + ":runClient");
+
+		if (rootProject.getTasks().findByName("configureAllClientLaunches") == null) {
+			rootProject.getTasks().register("configureAllClientLaunches");
+		}
+
+		rootProject.getTasks().named("configureAllClientLaunches").configure(task -> task.dependsOn(getProject().getPath() + ":configureClientLaunch"));
+	}
+
+	private static void registerRootAliasTask(Project rootProject, String taskName, String dependencyPath) {
+		if (rootProject.getTasks().findByName(taskName) == null) {
+			rootProject.getTasks().register(taskName, task -> task.dependsOn(dependencyPath));
+		}
 	}
 
 	private static String sharedTaskSuffix(Project sharedProject) {

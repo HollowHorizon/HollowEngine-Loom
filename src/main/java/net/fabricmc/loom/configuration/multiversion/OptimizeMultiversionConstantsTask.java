@@ -24,28 +24,33 @@
 
 package net.fabricmc.loom.configuration.multiversion;
 
-import javax.inject.Inject;
+import java.io.IOException;
 
-import org.gradle.api.Project;
+import org.gradle.api.file.ConfigurableFileCollection;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
+import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.InputFiles;
+import org.gradle.api.tasks.TaskAction;
 
-import net.fabricmc.loom.api.MultiversionTargetAPI;
+import net.fabricmc.loom.task.AbstractLoomTask;
 
-public abstract class MultiversionTarget implements MultiversionTargetAPI {
-	@Inject
-	public MultiversionTarget(Project project) {
-		getConstantsClass().finalizeValueOnRead();
-		getMinecraftVersion().finalizeValueOnRead();
-	}
+public abstract class OptimizeMultiversionConstantsTask extends AbstractLoomTask {
+	@Input
+	public abstract Property<String> getTargetVersion();
 
-	@Override
-	public abstract Property<String> getMinecraftVersion();
-
-	@Override
-	@Deprecated(forRemoval = true)
+	@Input
 	public abstract Property<String> getConstantsClass();
 
-	public boolean isConfigured() {
-		return getMinecraftVersion().isPresent();
+	@Input
+	public abstract ListProperty<String> getAvailableVersions();
+
+	@InputFiles
+	public abstract ConfigurableFileCollection getClassesDirectories();
+
+	@TaskAction
+	public void optimize() throws IOException {
+		new MultiversionConstantsInliner(getConstantsClass().get(), getTargetVersion().get(), getAvailableVersions().get())
+				.inlineDirectories(getClassesDirectories().getFiles().stream().map(java.io.File::toPath).toList());
 	}
 }
