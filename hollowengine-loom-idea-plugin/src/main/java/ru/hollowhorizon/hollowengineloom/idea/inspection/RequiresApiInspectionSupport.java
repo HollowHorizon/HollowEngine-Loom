@@ -56,6 +56,14 @@ final class RequiresApiInspectionSupport {
 		return MESSAGE_PREFIX + " for versions " + sorted + ". Wrap the usage in a matching Constants guard or annotate the enclosing declaration with @RequiresApi.";
 	}
 
+	static String buildTargetMismatchMessage(Set<Integer> requiredVersions, String targetVersion) {
+		final String sorted = requiredVersions.stream()
+				.sorted()
+				.map(RequiresApiInspectionSupport::formatVersion)
+				.collect(Collectors.joining(", "));
+		return "This API is not available on target " + targetVersion + ". It is only available on " + sorted + ".";
+	}
+
 	private static int parsePart(String part) {
 		final StringBuilder digits = new StringBuilder();
 

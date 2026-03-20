@@ -17,6 +17,8 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 
 final class ProjectVersionResolver {
+	private static final Pattern TARGET_LITERAL_PATTERN = Pattern.compile("minecraftVersion\\s*=\\s*['\\\"](\\d+\\.\\d+\\.\\d+)['\\\"]");
+	private static final Pattern TARGET_PROPERTY_PATTERN = Pattern.compile("minecraftVersion\\s*=\\s*(?:project\\.)?([A-Za-z_][A-Za-z0-9_]*)");
 	private static final Pattern VERSION_LITERAL_PATTERN = Pattern.compile("(?:create|version)\\s*\\(\\s*['\\\"](\\d+\\.\\d+\\.\\d+)['\\\"]\\s*\\)");
 	private static final Pattern VERSION_PROPERTY_PATTERN = Pattern.compile("(?:create|version)\\s*\\(\\s*(?:project\\.)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\)");
 	private static final String[] BUILD_FILE_NAMES = {"build.gradle", "build.gradle.kts"};
@@ -34,14 +36,19 @@ final class ProjectVersionResolver {
 		}
 
 		for (Module module : ModuleManager.getInstance(project).getModules()) {
-			final VirtualFile moduleFile = module.getModuleFile();
+			final Path moduleDir = moduleDirectory(module);
 
-			if (moduleFile != null && moduleFile.getParent() != null) {
-				collectFromDirectory(moduleFile.getParent().toNioPath(), versions);
+			if (moduleDir != null) {
+				collectFromDirectory(moduleDir, versions);
 			}
 		}
 
 		return versions;
+	}
+
+	static Path moduleDirectory(Module module) {
+		final VirtualFile moduleFile = module.getModuleFile();
+		return moduleFile == null || moduleFile.getParent() == null ? null : moduleFile.getParent().toNioPath();
 	}
 
 	private static void collectFromDirectory(Path directory, Set<String> versions) {
@@ -77,7 +84,7 @@ final class ProjectVersionResolver {
 		}
 	}
 
-	private static Properties loadProperties(Path directory) {
+	static Properties loadProperties(Path directory) {
 		final Properties properties = new Properties();
 
 		for (String fileName : PROPERTIES_FILE_NAMES) {
@@ -94,5 +101,45 @@ final class ProjectVersionResolver {
 		}
 
 		return properties;
+	}
+
+	static boolean containsCommonMultiversionBlock(Path buildFile) {
+		if (!Files.isRegularFile(buildFile)) {
+			return false;
+		}
+
+		try {
+			final String content = Files.readString(buildFile, StandardCharsets.UTF_8);
+			return content.contains("multiversion") && content.contains("versions") && !content.contains("multiversionTarget");
+		} catch (IOException ignored) {
+			return false;
+		}
+	}
+
+	static String resolveTargetVersion(Path buildFile, Properties properties) {
+		if (!Files.isRegularFile(buildFile)) {
+			return null;
+		}
+
+		try {
+			final String content = Files.readString(buildFile, StandardCharsets.UTF_8);
+			final Matcher literalMatcher = TARGET_LITERAL_PATTERN.matcher(content);
+
+			if (literalMatcher.find()) {
+				return literalMatcher.group(1);
+			}
+
+			final Matcher propertyMatcher = TARGET_PROPERTY_PATTERN.matcher(content);
+
+			if (propertyMatcher.find()) {
+				final String propertyName = propertyMatcher.group(1);
+				final String value = properties.getProperty(propertyName);
+				return value != null && value.matches("\\d+\\.\\d+\\.\\d+") ? value : null;
+			}
+		} catch (IOException ignored) {
+			return null;
+		}
+
+		return null;
 	}
 }

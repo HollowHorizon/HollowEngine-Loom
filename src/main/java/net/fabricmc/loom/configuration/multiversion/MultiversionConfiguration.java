@@ -84,6 +84,25 @@ public abstract class MultiversionConfiguration implements Runnable {
 			task.getMarkerFile().set(project.getLayout().getBuildDirectory().file("loom-cache/validateMultiversionApiUsage.ok"));
 		});
 
+		final var generateIdeaMetadata = getTasks().register("generateMultiversionIdeaMetadata", GenerateMultiversionIdeaMetadataTask.class, task -> {
+			task.getMode().set(project.provider(() -> {
+				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
+				return target.isConfigured() ? MultiversionIdeaMetadata.Mode.TARGET.name() : MultiversionIdeaMetadata.Mode.COMMON.name();
+			}));
+			task.getTargetVersion().set(project.provider(() -> {
+				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
+				return target.isConfigured() ? target.getMinecraftVersion().getOrNull() : null;
+			}));
+			task.getConstantsClass().set(project.provider(() -> {
+				final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
+				return target.isConfigured()
+						? target.getConstantsClass().get()
+						: MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get();
+			}));
+			task.getVersionMappings().set(project.provider(() -> MultiversionSupport.resolveVersionMappings(project)));
+			task.getOutputFile().set(project.getLayout().getBuildDirectory().file(MultiversionIdeaMetadata.RELATIVE_PATH));
+		});
+
 		GradleUtils.afterSuccessfulEvaluation(project, () -> {
 			if (!MultiversionSupport.isMultiversionProject(project)) {
 				return;
@@ -93,7 +112,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 			final var stubJar = generateStub.flatMap(GenerateMultiversionStubTask::getStubJar);
 
 			configureCompileTasks(mainSourceSet, generateStub, generateConstants, validateApiUsage);
-			configureIdeaSync(generateStub, generateConstants);
+			configureIdeaSync(generateStub, generateConstants, generateIdeaMetadata);
 
 			if (target.isConfigured()) {
 				configureGeneratedConstantsSourceSet(generateConstants);
@@ -136,13 +155,15 @@ public abstract class MultiversionConfiguration implements Runnable {
 		}
 	}
 
-	private void configureIdeaSync(org.gradle.api.tasks.TaskProvider<GenerateMultiversionStubTask> generateStub, org.gradle.api.tasks.TaskProvider<GenerateMultiversionConstantsTask> generateConstants) {
+	private void configureIdeaSync(org.gradle.api.tasks.TaskProvider<GenerateMultiversionStubTask> generateStub, org.gradle.api.tasks.TaskProvider<GenerateMultiversionConstantsTask> generateConstants, org.gradle.api.tasks.TaskProvider<GenerateMultiversionIdeaMetadataTask> generateIdeaMetadata) {
 		final MultiversionTarget target = (MultiversionTarget) LoomGradleExtension.get(getProject()).getMultiversionTarget();
 
 		getTasks().configureEach(task -> {
 			if (!"ideaSyncTask".equals(task.getName())) {
 				return;
 			}
+
+			task.dependsOn(generateIdeaMetadata);
 
 			if (!target.isConfigured()) {
 				task.dependsOn(generateStub);
@@ -183,6 +204,21 @@ public abstract class MultiversionConfiguration implements Runnable {
 
 		for (Project sharedProject : sharedProjects) {
 			preparedOutputs.put(sharedProject, registerPreparedSharedOutput(sharedProject, targetVersion));
+		}
+
+		for (String configurationName : List.of(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, JavaPlugin.API_CONFIGURATION_NAME, JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, JavaPlugin.RUNTIME_ONLY_CONFIGURATION_NAME)) {
+			final Configuration configuration = getProject().getConfigurations().findByName(configurationName);
+
+			if (configuration == null) {
+				continue;
+			}
+
+			configuration.getDependencies().removeIf(dependency -> dependency instanceof ProjectDependency projectDependency && sharedProjects.contains(projectDependency.getDependencyProject()));
+		}
+
+		for (Project sharedProject : sharedProjects) {
+			final var preparedOutput = preparedOutputs.get(sharedProject);
+			getProject().getDependencies().add(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, getProject().files(preparedOutput.flatMap(PrepareMultiversionSharedOutputTask::getOutputDirectory)));
 		}
 
 		getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class).configure(task -> {

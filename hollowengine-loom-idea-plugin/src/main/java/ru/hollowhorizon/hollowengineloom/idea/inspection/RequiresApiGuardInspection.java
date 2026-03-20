@@ -7,6 +7,7 @@ import java.util.Set;
 
 import com.intellij.codeInspection.AbstractBaseJavaLocalInspectionTool;
 import com.intellij.codeInspection.ProblemsHolder;
+import com.intellij.openapi.module.Module;
 import com.intellij.psi.JavaElementVisitor;
 import com.intellij.psi.PsiAnnotation;
 import com.intellij.psi.PsiAnnotationMemberValue;
@@ -30,6 +31,7 @@ import com.intellij.psi.PsiStatement;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
+import com.intellij.openapi.module.ModuleUtilCore;
 
 public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspectionTool {
 	@Override
@@ -64,10 +66,32 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 			return;
 		}
 
+		final Module module = ModuleUtilCore.findModuleForPsiElement(usage);
+		final MultiversionModuleClassifier.ModuleMode moduleMode = MultiversionModuleClassifier.classify(module);
+
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.NONE) {
+			return;
+		}
+
 		final Set<Integer> requiredVersions = collectRequiredVersions(target);
+
+		if (requiredVersions.isEmpty()) {
+			return;
+		}
+
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.TARGET) {
+			final int targetVersion = RequiresApiInspectionSupport.packVersion(moduleMode.targetVersion());
+
+			if (!requiredVersions.contains(targetVersion)) {
+				holder.registerProblem(usage, RequiresApiInspectionSupport.buildTargetMismatchMessage(requiredVersions, moduleMode.targetVersion()));
+			}
+
+			return;
+		}
+
 		final Set<Integer> projectVersions = RequiresApiInspectionSupport.resolveProjectVersions(usage);
 
-		if (requiredVersions.isEmpty() || RequiresApiInspectionSupport.isAvailableEverywhere(requiredVersions, projectVersions)) {
+		if (RequiresApiInspectionSupport.isAvailableEverywhere(requiredVersions, projectVersions)) {
 			return;
 		}
 
