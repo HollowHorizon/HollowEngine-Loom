@@ -31,11 +31,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
+import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.DependencyArtifact;
 import org.gradle.api.artifacts.ModuleDependency;
@@ -48,6 +52,8 @@ import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
 
 import net.fabricmc.loom.LoomGradlePlugin;
+import net.fabricmc.loom.LoomGradleExtension;
+import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.configuration.DependencyInfo;
 import net.fabricmc.loom.configuration.mods.dependency.LocalMavenHelper;
 import net.fabricmc.loom.configuration.providers.BundleMetadata;
@@ -68,6 +74,7 @@ import net.fabricmc.loom.util.FileSystemUtil;
 import net.fabricmc.loom.util.TinyRemapperHelper;
 import net.fabricmc.loom.util.ZipUtils;
 import net.fabricmc.loom.util.download.Download;
+import net.fabricmc.loom.util.gradle.GradleUtils;
 import net.fabricmc.mappingio.MappingReader;
 import net.fabricmc.mappingio.adapter.MappingDstNsReorder;
 import net.fabricmc.mappingio.adapter.MappingSourceNsSwitch;
@@ -107,8 +114,9 @@ public abstract class GenerateMultiversionStubTask extends AbstractLoomTask {
 		final MultiversionCollector collector = new MultiversionCollector();
 
 		for (Map.Entry<String, String> entry : new LinkedHashMap<>(getVersionMappings().get()).entrySet()) {
-			final Path namedJar = resolveNamedJar(workingDirectory, entry.getKey(), entry.getValue());
-			collector.addVersion(entry.getKey(), namedJar);
+			for (Path namedJar : resolveNamedJars(workingDirectory, entry.getKey(), entry.getValue())) {
+				collector.addVersion(entry.getKey(), namedJar);
+			}
 		}
 
 		final Path stubJar = getStubJar().get().getAsFile().toPath();
@@ -141,6 +149,37 @@ public abstract class GenerateMultiversionStubTask extends AbstractLoomTask {
 		remapJar(intermediaryJar, namedJar, mappingsTiny, "intermediary", "named");
 
 		return namedJar;
+	}
+
+	private List<Path> resolveNamedJars(Path workingDirectory, String minecraftVersion, String mappingsNotation) throws Exception {
+		final List<Path> processedTargetJars = resolveProcessedNamedJarsFromTargets(minecraftVersion);
+
+		if (!processedTargetJars.isEmpty()) {
+			return processedTargetJars;
+		}
+
+		return List.of(resolveNamedJar(workingDirectory, minecraftVersion, mappingsNotation));
+	}
+
+	private List<Path> resolveProcessedNamedJarsFromTargets(String minecraftVersion) {
+		final Set<Path> paths = new LinkedHashSet<>();
+
+		for (Project candidate : getProject().getRootProject().getAllprojects()) {
+			if (candidate == getProject() || !GradleUtils.isLoomProject(candidate)) {
+				continue;
+			}
+
+			final LoomGradleExtension extension = LoomGradleExtension.get(candidate);
+			final MultiversionTarget target = (MultiversionTarget) extension.getMultiversionTarget();
+
+			if (!target.isConfigured() || !minecraftVersion.equals(target.getMinecraftVersion().getOrNull())) {
+				continue;
+			}
+
+			paths.addAll(extension.getMinecraftJars(MappingsNamespace.NAMED));
+		}
+
+		return new ArrayList<>(paths);
 	}
 
 	private void remapJar(Path inputJar, Path outputJar, Path mappingsTiny, String fromNamespace, String toNamespace) throws IOException {
