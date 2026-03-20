@@ -39,6 +39,7 @@ import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.TaskAction;
 
+import net.fabricmc.loom.configuration.multiversion.MultiversionSupport;
 import net.fabricmc.loom.api.RemapConfigurationSettings;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.task.AbstractLoomTask;
@@ -52,6 +53,12 @@ public abstract class GenerateRemapClasspathTask extends AbstractLoomTask {
 	public abstract RegularFileProperty getRemapClasspathFile();
 
 	public GenerateRemapClasspathTask() {
+		if (shouldSkipMinecraftSetup()) {
+			getRemapClasspathFile().set(getProject().getLayout().getBuildDirectory().file("loom-cache/noop/remap-classpath.txt"));
+			onlyIf(task -> false);
+			return;
+		}
+
 		final ConfigurationContainer configurations = getProject().getConfigurations();
 
 		getRemapClasspath().from(configurations.named(Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES));
@@ -64,6 +71,18 @@ public abstract class GenerateRemapClasspathTask extends AbstractLoomTask {
 				.toList()));
 
 		getRemapClasspathFile().set(getExtension().getFiles().getRemapClasspathFile());
+	}
+
+	private boolean shouldSkipMinecraftSetup() {
+		if (!MultiversionSupport.isMultiversionProject(getProject())) {
+			return false;
+		}
+
+		if (getExtension().getMultiversionTarget().getMinecraftVersion().isPresent()) {
+			return false;
+		}
+
+		return getProject().getConfigurations().getByName(Constants.Configurations.MINECRAFT).getDependencies().isEmpty();
 	}
 
 	@TaskAction

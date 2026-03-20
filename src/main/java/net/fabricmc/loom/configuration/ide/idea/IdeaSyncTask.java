@@ -104,13 +104,14 @@ public abstract class IdeaSyncTask extends AbstractLoomTask {
 	private List<IntelijRunConfig> getRunConfigs() throws IOException {
 		Project rootProject = getProject().getRootProject();
 		LoomGradleExtension extension = LoomGradleExtension.get(getProject());
+		final boolean forceGenerateRuns = extension.getMultiversionTarget().getMinecraftVersion().isPresent();
 		String projectPath = getProject() == rootProject ? "" : getProject().getPath().replace(':', '_');
 		File runConfigsDir = new File(rootProject.file(".idea"), "runConfigurations");
 
 		List<IntelijRunConfig> configs = new ArrayList<>();
 
 		for (RunConfigSettings settings : extension.getRunConfigs()) {
-			if (!settings.isIdeConfigGenerated()) {
+			if (!forceGenerateRuns && !settings.isIdeConfigGenerated()) {
 				continue;
 			}
 
@@ -149,10 +150,17 @@ public abstract class IdeaSyncTask extends AbstractLoomTask {
 
 		default void writeLaunchFile() throws IOException {
 			Path launchFile = getLaunchFile().get().getAsFile().toPath();
+			final String runConfigXml = getRunConfigXml().get();
 
 			if (Files.notExists(launchFile)) {
 				Files.createDirectories(launchFile.getParent());
-				Files.writeString(launchFile, getRunConfigXml().get(), StandardCharsets.UTF_8);
+				Files.writeString(launchFile, runConfigXml, StandardCharsets.UTF_8);
+			} else {
+				final String existingXml = Files.readString(launchFile, StandardCharsets.UTF_8);
+
+				if (!existingXml.equals(runConfigXml)) {
+					Files.writeString(launchFile, runConfigXml, StandardCharsets.UTF_8);
+				}
 			}
 
 			try {

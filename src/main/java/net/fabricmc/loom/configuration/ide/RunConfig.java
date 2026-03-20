@@ -146,7 +146,7 @@ public class RunConfig {
 		runConfig.vmArgs.add("-Dfabric.dli.config=" + encodeEscaped(extension.getFiles().getDevLauncherConfig().getAbsolutePath()));
 		runConfig.vmArgs.add("-Dfabric.dli.env=" + environment.toLowerCase());
 		runConfig.eclipseProjectName = project.getExtensions().getByType(EclipseModel.class).getProject().getName();
-		runConfig.ideaModuleName = IdeaUtils.getIdeaModuleName(new SourceSetReference(sourceSet, project));
+		runConfig.ideaModuleName = IdeaUtils.resolveRunConfigModuleName(new SourceSetReference(sourceSet, project));
 		runConfig.runDirIdeaUrl = "file://$PROJECT_DIR$/" + runDir;
 		runConfig.runDir = runDir;
 		runConfig.sourceSet = sourceSet;

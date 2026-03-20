@@ -60,6 +60,7 @@ import org.jetbrains.annotations.ApiStatus;
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.build.IntermediaryNamespaces;
+import net.fabricmc.loom.configuration.multiversion.MultiversionSupport;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftVersionMeta;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.MappedMinecraftProvider;
 import net.fabricmc.loom.task.AbstractLoomTask;
@@ -128,6 +129,12 @@ public abstract class GenerateDLIConfigTask extends AbstractLoomTask {
 	protected abstract SetProperty<ForgeRunTemplate.Resolved> getRunTemplates();
 
 	public GenerateDLIConfigTask() {
+		if (shouldSkipMinecraftSetup()) {
+			configureNoopInputs();
+			onlyIf(task -> false);
+			return;
+		}
+
 		getVersionInfoJson().set(getProject().provider(() -> LoomGradlePlugin.GSON.toJson(getExtension().getMinecraftProvider().getVersionInfo())));
 		getMinecraftVersion().set(getProject().provider(() -> getExtension().getMinecraftProvider().minecraftVersion()));
 		getSplitSourceSets().set(getProject().provider(() -> getExtension().areEnvironmentSourceSetsSplit()));
@@ -162,6 +169,33 @@ public abstract class GenerateDLIConfigTask extends AbstractLoomTask {
 		} else {
 			getRunTemplates().empty();
 		}
+	}
+
+	private void configureNoopInputs() {
+		getVersionInfoJson().convention("{}");
+		getMinecraftVersion().convention("");
+		getSplitSourceSets().convention(false);
+		getANSISupportedIDE().convention(false);
+		getPlainConsole().convention(true);
+		getLog4jConfigPaths().convention("");
+		getAssetsDirectoryPath().convention(getProject().getLayout().getBuildDirectory().dir("loom-cache/noop/assets").map(dir -> dir.getAsFile().getAbsolutePath()));
+		getNativesDirectoryPath().convention(getProject().getLayout().getBuildDirectory().dir("loom-cache/noop/natives").map(dir -> dir.getAsFile().getAbsolutePath()));
+		getDevLauncherConfig().set(getProject().getLayout().getBuildDirectory().file("loom-cache/noop/dev-launcher.cfg"));
+		getPlatformMappingFile().set(getProject().getLayout().getBuildDirectory().file("loom-cache/noop/platform-mappings.tiny"));
+		getMappingJars().from(getProject().files());
+		getRunTemplates().empty();
+	}
+
+	private boolean shouldSkipMinecraftSetup() {
+		if (!MultiversionSupport.isMultiversionProject(getProject())) {
+			return false;
+		}
+
+		if (getExtension().getMultiversionTarget().getMinecraftVersion().isPresent()) {
+			return false;
+		}
+
+		return getProject().getConfigurations().getByName(Constants.Configurations.MINECRAFT).getDependencies().isEmpty();
 	}
 
 	@TaskAction

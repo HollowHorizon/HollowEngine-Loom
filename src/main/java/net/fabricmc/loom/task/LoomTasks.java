@@ -25,6 +25,7 @@
 package net.fabricmc.loom.task;
 
 import java.io.File;
+import java.util.List;
 
 import javax.inject.Inject;
 
@@ -123,6 +124,7 @@ public abstract class LoomTasks implements Runnable {
 			LoomGradleExtension extension = LoomGradleExtension.get(getProject());
 
 			if (shouldSkipMinecraftSetup(extension)) {
+				disableLaunchTasks();
 				return;
 			}
 
@@ -142,6 +144,32 @@ public abstract class LoomTasks implements Runnable {
 
 			registerClientSetupTasks(getTasks(), versionInfo.hasNativesToExtract());
 		});
+	}
+
+	private void disableLaunchTasks() {
+		final List<String> taskNames = List.of(
+				"downloadAssets",
+				"extractNatives",
+				"generateDLIConfig",
+				"generateLog4jConfig",
+				"generateRemapClasspath",
+				"configureLaunch",
+				"configureClientLaunch",
+				"runClient",
+				"runServer",
+				"runClientRenderDoc",
+				"downloadRenderDoc",
+				"extractRenderDoc",
+				"startRenderDocUI",
+				"genEclipseRuns",
+				"vscode"
+		);
+
+		for (String taskName : taskNames) {
+			if (getTasks().getNames().contains(taskName)) {
+				getTasks().named(taskName).configure(task -> task.setEnabled(false));
+			}
+		}
 	}
 
 	private boolean shouldSkipMinecraftSetup(LoomGradleExtension extension) {

@@ -44,12 +44,26 @@ public abstract class IdeaConfiguration implements Runnable {
 	protected abstract Project getProject();
 
 	public void run() {
-		getProject().getTasks().register("ideaSyncTask", IdeaSyncTask.class, task -> {
-			if (LoomGradleExtension.get(getProject()).getRunConfigs().stream().anyMatch(RunConfigSettings::isIdeConfigGenerated)) {
-				task.dependsOn(LoomTasks.getIDELaunchConfigureTaskName(getProject()));
-			} else {
-				task.setEnabled(false);
+		final var ideaSyncTask = getProject().getTasks().register("ideaSyncTask", IdeaSyncTask.class);
+
+		GradleUtils.afterSuccessfulEvaluation(getProject(), () -> {
+			final LoomGradleExtension extension = LoomGradleExtension.get(getProject());
+			final boolean multiversionTarget = extension.getMultiversionTarget().getMinecraftVersion().isPresent();
+
+			if (multiversionTarget) {
+				extension.getRunConfigs().configureEach(runConfig -> runConfig.ideConfigGenerated(true));
 			}
+
+			final boolean shouldGenerateRuns = multiversionTarget || extension.getRunConfigs().stream()
+					.anyMatch(RunConfigSettings::isIdeConfigGenerated);
+
+			ideaSyncTask.configure(task -> {
+				task.setEnabled(shouldGenerateRuns);
+
+				if (shouldGenerateRuns) {
+					task.dependsOn(LoomTasks.getIDELaunchConfigureTaskName(getProject()));
+				}
+			});
 		});
 
 		hookDownloadSources();
