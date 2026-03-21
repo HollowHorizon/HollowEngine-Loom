@@ -74,10 +74,7 @@ public final class MultiversionConstantsGenerator {
 		}
 
 		builder.append("\n");
-		builder.append("\tprivate ").append(simpleName).append("() {\n\t}\n\n");
-		builder.append("\tpublic static boolean is(int version) {\n\t\treturn MINECRAFT_VERSION == version;\n\t}\n\n");
-		builder.append("\tpublic static boolean isAtLeast(int version) {\n\t\treturn MINECRAFT_VERSION >= version;\n\t}\n\n");
-		builder.append("\tpublic static boolean isAtMost(int version) {\n\t\treturn MINECRAFT_VERSION <= version;\n\t}\n");
+		builder.append("\tprivate ").append(simpleName).append("() {\n\t}\n");
 		builder.append("}\n");
 		return builder.toString();
 	}

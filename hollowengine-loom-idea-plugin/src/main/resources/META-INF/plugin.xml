@@ -60,7 +60,14 @@
                 enabledByDefault="true"
                 level="ERROR"
                 implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.HollowPacketDirectionInspection"/>
-        <completion.contributor language="any" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.MultiversionCompletionContributor"/>
+        <completion.contributor
+                language="JAVA"
+                order="first"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.MultiversionCompletionContributor"/>
+        <completion.contributor
+                language="kotlin"
+                order="first"
+                implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.MultiversionCompletionContributor"/>
         <implicitUsageProvider implementation="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventImplicitUsageProvider"/>
         <codeInsight.lineMarkerProvider language="JAVA" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventLineMarkerProvider"/>
         <codeInsight.lineMarkerProvider language="kotlin" implementationClass="ru.hollowhorizon.hollowengineloom.idea.inspection.SubscribeEventLineMarkerProvider"/>
@@ -71,4 +78,5 @@
     <extensions defaultExtensionNs="org.jetbrains.kotlin">
         <supportsKotlinPluginMode supportsK2="true"/>
     </extensions>
+
 </idea-plugin>

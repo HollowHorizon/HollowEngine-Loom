@@ -4,7 +4,7 @@ Reports usages of APIs marked with <code>@RequiresApi</code> when they are not p
 <p>
 The first implementation recognizes direct Java guards such as:
 </p>
-<pre><code>if (Constants.is(1211)) {
+<pre><code>if (Constants.MINECRAFT == Constants.V1_21_1) {
     BlockPos.max(a, b);
 }</code></pre>
 <p>

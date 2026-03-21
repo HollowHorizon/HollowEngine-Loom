@@ -60,6 +60,20 @@ class MultiversionApiUsageValidatorTest extends Specification {
 				.isEmpty()
 	}
 
+	def "allows reversed direct version compare guard"() {
+		expect:
+		new MultiversionApiUsageValidator(metadata(), "com.example.Constants")
+				.validateClass("example/CommonBlockPos.class", classWithReverseCompareMethod("test"))
+				.isEmpty()
+	}
+
+	def "allows unreachable contradictory nested guard"() {
+		expect:
+		new MultiversionApiUsageValidator(metadata(), "com.example.Constants")
+				.validateClass("example/CommonBlockPos.class", classWithContradictoryNestedGuard("test"))
+				.isEmpty()
+	}
+
 	def "allows method level requires api annotation"() {
 		expect:
 		new MultiversionApiUsageValidator(metadata(), "com.example.Constants")
@@ -122,6 +136,71 @@ class MultiversionApiUsageValidatorTest extends Specification {
 		method.visitMaxs(0, 0)
 		method.visitEnd()
 
+		writer.visitEnd()
+		return writer.toByteArray()
+	}
+
+	private static byte[] classWithReverseCompareMethod(String methodName) {
+		def writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES)
+		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "example/CommonBlockPos", null, "java/lang/Object", null)
+
+		def ctor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null)
+		ctor.visitCode()
+		ctor.visitVarInsn(Opcodes.ALOAD, 0)
+		ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+		ctor.visitInsn(Opcodes.RETURN)
+		ctor.visitMaxs(0, 0)
+		ctor.visitEnd()
+
+		MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC, methodName, "()V", null, null)
+		Label end = new Label()
+		method.visitCode()
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "V1_21_1", "I")
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "MINECRAFT_VERSION", "I")
+		method.visitJumpInsn(Opcodes.IF_ICMPGT, end)
+		method.visitInsn(Opcodes.ACONST_NULL)
+		method.visitInsn(Opcodes.ACONST_NULL)
+		method.visitMethodInsn(Opcodes.INVOKESTATIC, "net/minecraft/util/math/BlockPos", "max", "(Lnet/minecraft/util/math/BlockPos;Lnet/minecraft/util/math/BlockPos;)Lnet/minecraft/util/math/BlockPos;", false)
+		method.visitInsn(Opcodes.POP)
+		method.visitLabel(end)
+		method.visitInsn(Opcodes.RETURN)
+		method.visitMaxs(0, 0)
+		method.visitEnd()
+		writer.visitEnd()
+		return writer.toByteArray()
+	}
+
+	private static byte[] classWithContradictoryNestedGuard(String methodName) {
+		def writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES)
+		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "example/CommonBlockPos", null, "java/lang/Object", null)
+
+		def ctor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null)
+		ctor.visitCode()
+		ctor.visitVarInsn(Opcodes.ALOAD, 0)
+		ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+		ctor.visitInsn(Opcodes.RETURN)
+		ctor.visitMaxs(0, 0)
+		ctor.visitEnd()
+
+		MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC, methodName, "()V", null, null)
+		Label outerEnd = new Label()
+		Label innerEnd = new Label()
+		method.visitCode()
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "V1_21_1", "I")
+		method.visitMethodInsn(Opcodes.INVOKESTATIC, "com/example/Constants", "is", "(I)Z", false)
+		method.visitJumpInsn(Opcodes.IFEQ, outerEnd)
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "V1_20_1", "I")
+		method.visitMethodInsn(Opcodes.INVOKESTATIC, "com/example/Constants", "is", "(I)Z", false)
+		method.visitJumpInsn(Opcodes.IFEQ, innerEnd)
+		method.visitInsn(Opcodes.ACONST_NULL)
+		method.visitInsn(Opcodes.ACONST_NULL)
+		method.visitMethodInsn(Opcodes.INVOKESTATIC, "net/minecraft/util/math/BlockPos", "max", "(Lnet/minecraft/util/math/BlockPos;Lnet/minecraft/util/math/BlockPos;)Lnet/minecraft/util/math/BlockPos;", false)
+		method.visitInsn(Opcodes.POP)
+		method.visitLabel(innerEnd)
+		method.visitLabel(outerEnd)
+		method.visitInsn(Opcodes.RETURN)
+		method.visitMaxs(0, 0)
+		method.visitEnd()
 		writer.visitEnd()
 		return writer.toByteArray()
 	}

@@ -7,7 +7,7 @@ public final class FabricTarget {
 	}
 
 	public boolean isTargetVersion() {
-		return Constants.is(1201) && Constants.isAtMost(1201);
+		return Constants.MINECRAFT == Constants.V1_20_1 && Constants.MINECRAFT <= Constants.V1_20_1;
 	}
 
 	public int x() {

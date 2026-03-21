@@ -35,7 +35,7 @@ import spock.lang.Specification
 import net.fabricmc.loom.configuration.multiversion.MultiversionConstantsInliner
 
 class MultiversionConstantsInlinerTest extends Specification {
-	def "helper call is folded into the branch itself"() {
+	def "equality comparison is folded into the branch itself"() {
 		given:
 		def writer = new ClassWriter(0)
 		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "example/Test", null, "java/lang/Object", null)
@@ -52,9 +52,9 @@ class MultiversionConstantsInlinerTest extends Specification {
 		def falseLabel = new Label()
 		def endLabel = new Label()
 		method.visitCode()
-		method.visitIntInsn(Opcodes.SIPUSH, 1211)
-		method.visitMethodInsn(Opcodes.INVOKESTATIC, "com/example/Constants", "is", "(I)Z", false)
-		method.visitJumpInsn(Opcodes.IFEQ, falseLabel)
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "MINECRAFT", "I")
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "V1_21_1", "I")
+		method.visitJumpInsn(Opcodes.IF_ICMPNE, falseLabel)
 		method.visitInsn(Opcodes.RETURN)
 		method.visitLabel(falseLabel)
 		method.visitInsn(Opcodes.RETURN)
@@ -75,11 +75,11 @@ class MultiversionConstantsInlinerTest extends Specification {
 				.collect { it.opcode }
 
 		then:
-		!opcodes.contains(Opcodes.SIPUSH)
-		!opcodes.contains(Opcodes.INVOKESTATIC)
-		!opcodes.contains(Opcodes.IFEQ)
+		!opcodes.contains(Opcodes.GETSTATIC)
+		!opcodes.contains(Opcodes.IF_ICMPNE)
 		!opcodes.contains(Opcodes.IFNE)
-		opcodes == [Opcodes.RETURN, Opcodes.RETURN]
+		opcodes.every { it in [Opcodes.RETURN, Opcodes.GOTO] }
+		opcodes.count { it == Opcodes.RETURN } == 2
 	}
 
 	def "version comparison is folded into an unconditional jump"() {
@@ -122,6 +122,49 @@ class MultiversionConstantsInlinerTest extends Specification {
 		then:
 		!opcodes.contains(Opcodes.GETSTATIC)
 		!opcodes.contains(Opcodes.IF_ICMPLT)
+		opcodes[0] == Opcodes.GOTO
+	}
+
+	def "reversed version comparison is folded into an unconditional jump"() {
+		given:
+		def writer = new ClassWriter(0)
+		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "example/TestCompareReversed", null, "java/lang/Object", null)
+
+		def init = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null)
+		init.visitCode()
+		init.visitVarInsn(Opcodes.ALOAD, 0)
+		init.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+		init.visitInsn(Opcodes.RETURN)
+		init.visitMaxs(1, 1)
+		init.visitEnd()
+
+		def method = writer.visitMethod(Opcodes.ACC_PUBLIC, "testCompare", "()V", null, null)
+		def falseLabel = new Label()
+		method.visitCode()
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "V1_21_1", "I")
+		method.visitFieldInsn(Opcodes.GETSTATIC, "com/example/Constants", "MINECRAFT_VERSION", "I")
+		method.visitJumpInsn(Opcodes.IF_ICMPGT, falseLabel)
+		method.visitInsn(Opcodes.RETURN)
+		method.visitLabel(falseLabel)
+		method.visitInsn(Opcodes.RETURN)
+		method.visitMaxs(2, 1)
+		method.visitEnd()
+
+		writer.visitEnd()
+		def inliner = new MultiversionConstantsInliner("com.example.Constants", "1.20.1", ["1.20.1", "1.21.1"])
+
+		when:
+		def output = inliner.inline(writer.toByteArray())
+		def classNode = new ClassNode()
+		new ClassReader(output).accept(classNode, 0)
+		def instructions = classNode.methods.find { it.name == "testCompare" }.instructions.toArray()
+		def opcodes = instructions
+				.findAll { it.type != AbstractInsnNode.FRAME && it.type != AbstractInsnNode.LINE && it.type != AbstractInsnNode.LABEL }
+				.collect { it.opcode }
+
+		then:
+		!opcodes.contains(Opcodes.GETSTATIC)
+		!opcodes.contains(Opcodes.IF_ICMPGT)
 		opcodes[0] == Opcodes.GOTO
 	}
 }

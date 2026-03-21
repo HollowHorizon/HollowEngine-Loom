@@ -78,7 +78,7 @@ class MultiversionStubGeneratorTest extends Specification {
 
 		and:
 		new String(ZipUtils.unpack(sourcesJar, "example/PoseStack.java")).contains("@RequiresApi")
-		new String(ZipUtils.unpack(sourcesJar, "com/example/Constants.java")).contains("public static boolean isAtLeast")
+		!new String(ZipUtils.unpack(sourcesJar, "com/example/Constants.java")).contains("public static boolean isAtLeast")
 	}
 
 	def "renders extends and implements in generated sources"() {

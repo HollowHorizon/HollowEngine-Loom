@@ -30,13 +30,33 @@ final class MultiversionModuleClassifier {
 
 	private static ModuleMode detectModeFallback(Module module) {
 		final String path = ExternalSystemApiUtil.getExternalProjectPath(module);
-		if (path == null) return ModuleMode.none();
-		final Path moduleDir = Path.of(path);
+		final Path moduleDir;
 
-		final Path groovyBuildFile = moduleDir.resolve("build.gradle");
-		final Path kotlinBuildFile = moduleDir.resolve("build.gradle.kts");
-		final Properties properties = ProjectVersionResolver.loadProperties(moduleDir);
+		if (path != null) {
+			moduleDir = Path.of(path);
+		} else {
+			moduleDir = ProjectVersionResolver.moduleDirectory(module);
+		}
 
+		final ModuleMode localMode = moduleDir == null ? ModuleMode.none() : detectModeFromDirectory(moduleDir);
+
+		if (localMode.kind() != Kind.NONE) {
+			return localMode;
+		}
+
+		final String projectBasePath = module.getProject().getBasePath();
+
+		if (projectBasePath == null) {
+			return ModuleMode.none();
+		}
+
+		return detectModeFromDirectory(Path.of(projectBasePath));
+	}
+
+	private static ModuleMode detectModeFromDirectory(Path directory) {
+		final Path groovyBuildFile = directory.resolve("build.gradle");
+		final Path kotlinBuildFile = directory.resolve("build.gradle.kts");
+		final Properties properties = ProjectVersionResolver.loadProperties(directory);
 		final String targetVersion = ProjectVersionResolver.resolveTargetVersion(groovyBuildFile, properties);
 
 		if (targetVersion != null) {
@@ -49,10 +69,10 @@ final class MultiversionModuleClassifier {
 			return ModuleMode.target(kotlinTargetVersion, null);
 		}
 
-		if (ProjectVersionResolver.containsCommonMultiversionBlock(groovyBuildFile) || ProjectVersionResolver.containsCommonMultiversionBlock(kotlinBuildFile)) {
+		if (ProjectVersionResolver.containsCommonMultiversionBlock(groovyBuildFile)
+				|| ProjectVersionResolver.containsCommonMultiversionBlock(kotlinBuildFile)) {
 			return ModuleMode.common(null);
 		}
-
 
 		return ModuleMode.none();
 	}

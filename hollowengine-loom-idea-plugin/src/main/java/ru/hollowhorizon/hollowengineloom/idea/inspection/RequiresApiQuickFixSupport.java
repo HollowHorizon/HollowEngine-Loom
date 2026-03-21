@@ -28,7 +28,7 @@ final class RequiresApiQuickFixSupport {
 		final String constantsClass = resolveConstantsClass(context);
 		return requiredVersions.stream()
 				.sorted()
-				.map(version -> constantsClass + ".is(" + constantsClass + "." + versionFieldName(version) + ")")
+				.map(version -> constantsClass + ".MINECRAFT == " + constantsClass + "." + versionFieldName(version))
 				.collect(Collectors.joining(" || "));
 	}
 
@@ -36,7 +36,7 @@ final class RequiresApiQuickFixSupport {
 		final String constantsClass = resolveConstantsClass(context);
 		return requiredVersions.stream()
 				.sorted()
-				.map(version -> constantsClass + ".`is`(" + constantsClass + "." + versionFieldName(version) + ")")
+				.map(version -> constantsClass + ".MINECRAFT == " + constantsClass + "." + versionFieldName(version))
 				.collect(Collectors.joining(" || "));
 	}
 

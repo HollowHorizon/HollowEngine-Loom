@@ -38,8 +38,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.IntPredicate;
-
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.Opcodes;
@@ -70,6 +68,7 @@ public final class MultiversionApiUsageValidator {
 	private final Map<String, Integer> packedVersions = new LinkedHashMap<>();
 	private final Map<String, BitSet> cachedVersionMasks = new LinkedHashMap<>();
 	private final BitSet allVersions;
+	private final MultiversionBytecodeConditionEvaluator conditionEvaluator;
 
 	public MultiversionApiUsageValidator(MultiversionApiMetadata metadata, String constantsClassName) {
 		this(metadata, constantsClassName, null);
@@ -96,6 +95,8 @@ public final class MultiversionApiUsageValidator {
 			this.allVersions = new BitSet(availableVersions.size());
 			this.allVersions.set(0, availableVersions.size());
 		}
+
+		this.conditionEvaluator = new MultiversionBytecodeConditionEvaluator(constantsClassName, this.availableVersions);
 	}
 
 	public List<String> validateDirectories(Iterable<Path> directories) throws IOException {
@@ -257,7 +258,7 @@ public final class MultiversionApiUsageValidator {
 				return;
 			}
 
-			final BranchState branchState = refineConditionalJump(instructions, index, opcode, currentVersions);
+			final MultiversionBytecodeConditionEvaluator.BranchEvaluation branchState = conditionEvaluator.evaluate(instructions, index, currentVersions);
 
 			if (branchState == null) {
 				mergeState(reachableStates, targetIndex, currentVersions, queue);
@@ -302,95 +303,6 @@ public final class MultiversionApiUsageValidator {
 		if (index + 1 < instructions.length) {
 			mergeState(reachableStates, index + 1, versions, queue);
 		}
-	}
-
-	private BranchState refineConditionalJump(AbstractInsnNode[] instructions, int branchIndex, int opcode, BitSet currentVersions) {
-		if (opcode == Opcodes.IFEQ || opcode == Opcodes.IFNE) {
-			final VersionCondition condition = extractHelperCondition(instructions, branchIndex);
-
-			if (condition != null) {
-				final BitSet trueVersions = condition.apply(currentVersions);
-				final BitSet falseVersions = subtract(currentVersions, trueVersions);
-				return opcode == Opcodes.IFNE
-						? new BranchState(trueVersions, falseVersions)
-						: new BranchState(falseVersions, trueVersions);
-			}
-		}
-
-		if (opcode == Opcodes.IF_ICMPEQ || opcode == Opcodes.IF_ICMPNE || opcode == Opcodes.IF_ICMPLT
-				|| opcode == Opcodes.IF_ICMPGE || opcode == Opcodes.IF_ICMPGT || opcode == Opcodes.IF_ICMPLE) {
-			final VersionCondition condition = extractVersionCompareCondition(instructions, branchIndex, opcode);
-
-			if (condition != null) {
-				final BitSet trueVersions = condition.apply(currentVersions);
-				return new BranchState(trueVersions, subtract(currentVersions, trueVersions));
-			}
-		}
-
-		return null;
-	}
-
-	private VersionCondition extractHelperCondition(AbstractInsnNode[] instructions, int branchIndex) {
-		final int callIndex = previousMeaningfulIndex(instructions, branchIndex);
-
-		if (callIndex < 0 || !(instructions[callIndex] instanceof MethodInsnNode methodInsn)) {
-			return null;
-		}
-
-		if (methodInsn.getOpcode() != Opcodes.INVOKESTATIC || !constantsClassInternalName.equals(methodInsn.owner) || !"(I)Z".equals(methodInsn.desc)) {
-			return null;
-		}
-
-		final Integer constant = extractIntConstant(instructions, callIndex);
-
-		if (constant == null) {
-			return null;
-		}
-
-		return switch (methodInsn.name) {
-		case "is" -> filter -> filterByPackedValue(filter, packed -> packed == constant);
-		case "isAtLeast" -> filter -> filterByPackedValue(filter, packed -> packed >= constant);
-		case "isAtMost" -> filter -> filterByPackedValue(filter, packed -> packed <= constant);
-		default -> null;
-		};
-	}
-
-	private VersionCondition extractVersionCompareCondition(AbstractInsnNode[] instructions, int branchIndex, int opcode) {
-		final int rightIndex = previousMeaningfulIndex(instructions, branchIndex);
-		final int leftIndex = previousMeaningfulIndex(instructions, rightIndex);
-
-		if (leftIndex < 0 || rightIndex < 0) {
-			return null;
-		}
-
-		final AbstractInsnNode leftInstruction = instructions[leftIndex];
-		final AbstractInsnNode rightInstruction = instructions[rightIndex];
-
-		if (isVersionField(leftInstruction)) {
-			final Integer constant = readIntConstant(rightInstruction);
-			return constant == null ? null : filter -> filterByPackedValue(filter, packed -> comparePacked(packed, constant, opcode));
-		}
-
-		if (isVersionField(rightInstruction)) {
-			final Integer constant = readIntConstant(leftInstruction);
-			return constant == null ? null : filter -> filterByPackedValue(filter, packed -> comparePackedReversed(constant, packed, opcode));
-		}
-
-		return null;
-	}
-
-	private BitSet filterByPackedValue(BitSet sourceVersions, IntPredicate predicate) {
-		final BitSet filtered = new BitSet(availableVersions.size());
-
-		for (int bit = sourceVersions.nextSetBit(0); bit >= 0; bit = sourceVersions.nextSetBit(bit + 1)) {
-			final String version = availableVersions.get(bit);
-
-			if (predicate.test(packedVersions.get(version))) {
-				filtered.set(bit);
-			}
-		}
-
-		return filtered;
 	}
 
 	private void validateMethodDescriptor(String descriptor, BitSet currentVersions, String location, Set<String> violations) {
@@ -567,68 +479,6 @@ public final class MultiversionApiUsageValidator {
 		return -1;
 	}
 
-	private Integer extractIntConstant(AbstractInsnNode[] instructions, int producerIndex) {
-		final int constantIndex = previousMeaningfulIndex(instructions, producerIndex);
-		return constantIndex < 0 ? null : readIntConstant(instructions[constantIndex]);
-	}
-
-	private Integer readIntConstant(AbstractInsnNode instruction) {
-		if (instruction instanceof FieldInsnNode fieldInsn
-				&& fieldInsn.getOpcode() == Opcodes.GETSTATIC
-				&& constantsClassInternalName.equals(fieldInsn.owner)
-				&& "I".equals(fieldInsn.desc)) {
-			if ("MINECRAFT_VERSION".equals(fieldInsn.name) || "MINECRAFT".equals(fieldInsn.name)) {
-				return null;
-			}
-
-			if ("MC_MAJOR".equals(fieldInsn.name) || "MC_MINOR".equals(fieldInsn.name) || "MC_PATCH".equals(fieldInsn.name)) {
-				return null;
-			}
-
-			for (String version : availableVersions) {
-				if (("V" + version.replaceAll("[^A-Za-z0-9]", "_")).equals(fieldInsn.name)) {
-					return packedVersions.get(version);
-				}
-			}
-		}
-
-		return switch (instruction.getOpcode()) {
-		case Opcodes.ICONST_M1 -> -1;
-		case Opcodes.ICONST_0 -> 0;
-		case Opcodes.ICONST_1 -> 1;
-		case Opcodes.ICONST_2 -> 2;
-		case Opcodes.ICONST_3 -> 3;
-		case Opcodes.ICONST_4 -> 4;
-		case Opcodes.ICONST_5 -> 5;
-		case Opcodes.BIPUSH, Opcodes.SIPUSH -> ((org.objectweb.asm.tree.IntInsnNode) instruction).operand;
-		default -> instruction instanceof LdcInsnNode ldcInsn && ldcInsn.cst instanceof Integer integer ? integer : null;
-		};
-	}
-
-	private boolean isVersionField(AbstractInsnNode instruction) {
-		return instruction instanceof FieldInsnNode fieldInsn
-				&& fieldInsn.getOpcode() == Opcodes.GETSTATIC
-				&& constantsClassInternalName.equals(fieldInsn.owner)
-				&& ("MINECRAFT_VERSION".equals(fieldInsn.name) || "MINECRAFT".equals(fieldInsn.name))
-				&& "I".equals(fieldInsn.desc);
-	}
-
-	private static boolean comparePacked(int left, int right, int opcode) {
-		return switch (opcode) {
-		case Opcodes.IF_ICMPEQ -> left == right;
-		case Opcodes.IF_ICMPNE -> left != right;
-		case Opcodes.IF_ICMPLT -> left < right;
-		case Opcodes.IF_ICMPGE -> left >= right;
-		case Opcodes.IF_ICMPGT -> left > right;
-		case Opcodes.IF_ICMPLE -> left <= right;
-		default -> false;
-		};
-	}
-
-	private static boolean comparePackedReversed(int leftConstant, int rightValue, int opcode) {
-		return comparePacked(leftConstant, rightValue, opcode);
-	}
-
 	private static BitSet subtract(BitSet left, BitSet right) {
 		final BitSet result = copy(left);
 		result.andNot(right);
@@ -645,12 +495,5 @@ public final class MultiversionApiUsageValidator {
 		} catch (IOException e) {
 			throw new RuntimeException("Failed to read class file " + path, e);
 		}
-	}
-
-	private record BranchState(BitSet jumpVersions, BitSet fallthroughVersions) { }
-
-	@FunctionalInterface
-	private interface VersionCondition {
-		BitSet apply(BitSet versions);
 	}
 }

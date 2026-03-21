@@ -1,7 +1,7 @@
 package ru.hollowhorizon.hollowengineloom.idea.inspection;
 
 import java.util.Collection;
-import java.util.LinkedHashSet;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
@@ -9,30 +9,22 @@ import com.intellij.codeInspection.AbstractBaseJavaLocalInspectionTool;
 import com.intellij.codeInspection.LocalQuickFix;
 import com.intellij.codeInspection.ProblemsHolder;
 import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.psi.JavaElementVisitor;
 import com.intellij.psi.PsiAnnotation;
-import com.intellij.psi.PsiAnnotationMemberValue;
-import com.intellij.psi.PsiArrayInitializerMemberValue;
-import com.intellij.psi.PsiBinaryExpression;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiElementVisitor;
-import com.intellij.psi.PsiExpression;
 import com.intellij.psi.PsiField;
 import com.intellij.psi.PsiIfStatement;
-import com.intellij.psi.PsiLiteralExpression;
 import com.intellij.psi.PsiMember;
 import com.intellij.psi.PsiMethod;
 import com.intellij.psi.PsiMethodCallExpression;
 import com.intellij.psi.PsiModifierListOwner;
 import com.intellij.psi.PsiNewExpression;
-import com.intellij.psi.PsiParameterList;
 import com.intellij.psi.PsiReferenceExpression;
 import com.intellij.psi.PsiStatement;
-import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.psi.util.PsiUtil;
-import com.intellij.openapi.module.ModuleUtilCore;
 
 public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspectionTool {
 	@Override
@@ -40,8 +32,7 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 		return new JavaElementVisitor() {
 			@Override
 			public void visitMethodCallExpression(PsiMethodCallExpression expression) {
-				final PsiMethod method = expression.resolveMethod();
-				checkUsage(expression, method, holder);
+				checkUsage(expression, expression.resolveMethod(), holder);
 			}
 
 			@Override
@@ -59,7 +50,39 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 			public void visitNewExpression(PsiNewExpression expression) {
 				checkUsage(expression, expression.resolveConstructor(), holder);
 			}
+
+			@Override
+			public void visitIfStatement(PsiIfStatement statement) {
+				super.visitIfStatement(statement);
+				checkCondition(statement.getCondition(), holder);
+			}
 		};
+	}
+
+	private static void checkCondition(PsiElement condition, ProblemsHolder holder) {
+		if (!(condition instanceof com.intellij.psi.PsiExpression psiExpression)) {
+			return;
+		}
+
+		final Module module = ModuleUtilCore.findModuleForPsiElement(psiExpression);
+		final MultiversionModuleClassifier.ModuleMode moduleMode = MultiversionModuleClassifier.classify(module);
+
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.NONE) {
+			return;
+		}
+
+		final Set<Integer> universe = collectContextVersions(psiExpression, resolveUniverseVersions(psiExpression, moduleMode));
+		final VersionConditionSupport.Evaluation evaluation = JavaVersionConditionEvaluator.evaluate(psiExpression, universe);
+
+		if (evaluation == null) {
+			return;
+		}
+
+		if (evaluation.trueVersions().isEmpty()) {
+			holder.registerProblem(psiExpression, RequiresApiInspectionSupport.buildConstantConditionMessage(false));
+		} else if (evaluation.falseVersions().isEmpty()) {
+			holder.registerProblem(psiExpression, RequiresApiInspectionSupport.buildConstantConditionMessage(true));
+		}
 	}
 
 	private static void checkUsage(PsiElement usage, PsiModifierListOwner target, ProblemsHolder holder) {
@@ -80,25 +103,29 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 			return;
 		}
 
+		final Set<Integer> universe = resolveUniverseVersions(usage, moduleMode);
+
+		if (universe.isEmpty()) {
+			return;
+		}
+
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.COMMON
+				&& RequiresApiInspectionSupport.isAvailableEverywhere(requiredVersions, universe)) {
+			return;
+		}
+
+		final Set<Integer> contextVersions = collectContextVersions(usage, universe);
+
+		if (contextVersions.isEmpty()) {
+			return;
+		}
+
+		if (requiredVersions.containsAll(contextVersions)) {
+			return;
+		}
+
 		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.TARGET) {
-			final int targetVersion = RequiresApiInspectionSupport.packVersion(moduleMode.targetVersion());
-
-			if (!requiredVersions.contains(targetVersion)) {
-				holder.registerProblem(usage, RequiresApiInspectionSupport.buildTargetMismatchMessage(requiredVersions, moduleMode.targetVersion()));
-			}
-
-			return;
-		}
-
-		final Set<Integer> projectVersions = RequiresApiInspectionSupport.resolveProjectVersions(usage);
-
-		if (RequiresApiInspectionSupport.isAvailableEverywhere(requiredVersions, projectVersions)) {
-			return;
-		}
-
-		final Set<Integer> contextVersions = collectContextVersions(usage);
-
-		if (!contextVersions.isEmpty() && requiredVersions.containsAll(contextVersions)) {
+			holder.registerProblem(usage, RequiresApiInspectionSupport.buildTargetMismatchMessage(requiredVersions, moduleMode.targetVersion()));
 			return;
 		}
 
@@ -126,151 +153,72 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 		return versions == null ? Set.of() : versions;
 	}
 
-	private static Set<Integer> collectContextVersions(PsiElement usage) {
-		Set<Integer> versions = null;
-
+	private static Set<Integer> collectContextVersions(PsiElement usage, Set<Integer> universe) {
+		Set<Integer> versions = VersionConditionSupport.copy(universe);
 		final PsiMethod method = PsiTreeUtil.getParentOfType(usage, PsiMethod.class);
 		final PsiClass psiClass = PsiTreeUtil.getParentOfType(usage, PsiClass.class);
 		versions = intersectWithAnnotation(versions, method);
 		versions = intersectWithAnnotation(versions, psiClass);
 
-		PsiElement current = usage;
+		final List<PsiIfStatement> ifStatements = collectEnclosingIfStatements(usage).stream()
+				.sorted(Comparator.comparingInt(statement -> depthFrom(statement, usage)))
+				.toList();
 
-		while (current != null && current != method && current != psiClass) {
-			if (current.getParent() instanceof PsiIfStatement ifStatement) {
-				final Set<Integer> branchVersions = resolveBranchVersions(ifStatement, current);
+		for (PsiIfStatement ifStatement : ifStatements) {
+			final Set<Integer> branchVersions = resolveBranchVersions(ifStatement, usage, versions);
+			versions = branchVersions.isEmpty() ? Set.of() : branchVersions;
+		}
 
-				if (!branchVersions.isEmpty()) {
-					versions = intersect(versions, branchVersions);
-				}
+		return versions;
+	}
+
+	private static int depthFrom(PsiElement ancestor, PsiElement descendant) {
+		int depth = 0;
+		PsiElement current = descendant;
+
+		while (current != null && current != ancestor) {
+			depth++;
+			current = current.getParent();
+		}
+
+		return depth;
+	}
+
+	private static List<PsiIfStatement> collectEnclosingIfStatements(PsiElement usage) {
+		final java.util.ArrayList<PsiIfStatement> ifStatements = new java.util.ArrayList<>();
+		PsiElement current = usage.getParent();
+
+		while (current != null) {
+			if (current instanceof PsiIfStatement ifStatement) {
+				ifStatements.add(ifStatement);
 			}
 
 			current = current.getParent();
 		}
 
-		return versions == null ? Set.of() : versions;
+		return ifStatements;
 	}
 
-	private static Set<Integer> resolveBranchVersions(PsiIfStatement ifStatement, PsiElement elementInBranch) {
+	private static Set<Integer> resolveBranchVersions(PsiIfStatement ifStatement, PsiElement elementInBranch, Set<Integer> universe) {
+		final VersionConditionSupport.Evaluation evaluation = JavaVersionConditionEvaluator.evaluate(ifStatement.getCondition(), universe);
+
+		if (evaluation == null) {
+			return universe;
+		}
+
 		final PsiStatement thenBranch = ifStatement.getThenBranch();
 
 		if (thenBranch != null && PsiTreeUtil.isAncestor(thenBranch, elementInBranch, false)) {
-			return resolveExactVersions(ifStatement.getCondition());
+			return evaluation.trueVersions();
 		}
 
-		return Set.of();
-	}
+		final PsiStatement elseBranch = ifStatement.getElseBranch();
 
-	private static Set<Integer> resolveExactVersions(PsiExpression expression) {
-		final PsiExpression unwrapped = PsiUtil.skipParenthesizedExprDown(expression);
-
-		if (unwrapped instanceof PsiMethodCallExpression callExpression) {
-			return resolveConstantsIsCall(callExpression);
+		if (elseBranch != null && PsiTreeUtil.isAncestor(elseBranch, elementInBranch, false)) {
+			return evaluation.falseVersions();
 		}
 
-		if (unwrapped instanceof PsiBinaryExpression binaryExpression) {
-			return resolveVersionEquality(binaryExpression);
-		}
-
-		return Set.of();
-	}
-
-	private static Set<Integer> resolveConstantsIsCall(PsiMethodCallExpression callExpression) {
-		if (!(callExpression.getMethodExpression().getQualifierExpression() instanceof PsiReferenceExpression qualifier)) {
-			return Set.of();
-		}
-
-		if (!"Constants".equals(qualifier.getReferenceName())) {
-			return Set.of();
-		}
-
-		if (!"is".equals(callExpression.getMethodExpression().getReferenceName())) {
-			return Set.of();
-		}
-
-		final PsiMethod resolvedMethod = callExpression.resolveMethod();
-
-		if (resolvedMethod == null) {
-			return Set.of();
-		}
-
-		final PsiParameterList parameterList = resolvedMethod.getParameterList();
-
-		if (parameterList.getParametersCount() != 1) {
-			return Set.of();
-		}
-
-		final PsiExpression[] arguments = callExpression.getArgumentList().getExpressions();
-
-		if (arguments.length != 1) {
-			return Set.of();
-		}
-
-		final Integer packed = readPackedVersion(arguments[0]);
-		return packed == null ? Set.of() : Set.of(packed);
-	}
-
-	private static Set<Integer> resolveVersionEquality(PsiBinaryExpression binaryExpression) {
-		final IElementType tokenType = binaryExpression.getOperationTokenType();
-
-		if (!JavaTokenSets.EQUALITY_TOKENS.contains(tokenType)) {
-			return Set.of();
-		}
-
-		final PsiExpression left = PsiUtil.skipParenthesizedExprDown(binaryExpression.getLOperand());
-		final PsiExpression right = PsiUtil.skipParenthesizedExprDown(binaryExpression.getROperand());
-
-		if (left == null || right == null) {
-			return Set.of();
-		}
-
-		if (isMinecraftVersionField(left)) {
-			final Integer packed = readPackedVersion(right);
-			return packed == null ? Set.of() : Set.of(packed);
-		}
-
-		if (isMinecraftVersionField(right)) {
-			final Integer packed = readPackedVersion(left);
-			return packed == null ? Set.of() : Set.of(packed);
-		}
-
-		return Set.of();
-	}
-
-	private static boolean isMinecraftVersionField(PsiExpression expression) {
-		if (!(expression instanceof PsiReferenceExpression referenceExpression)) {
-			return false;
-		}
-
-		if (!"MINECRAFT_VERSION".equals(referenceExpression.getReferenceName())) {
-			return false;
-		}
-
-		if (!(referenceExpression.getQualifierExpression() instanceof PsiReferenceExpression qualifier)) {
-			return false;
-		}
-
-		return "Constants".equals(qualifier.getReferenceName());
-	}
-
-	private static Integer readPackedVersion(PsiExpression expression) {
-		final PsiExpression unwrapped = PsiUtil.skipParenthesizedExprDown(expression);
-
-		if (unwrapped instanceof PsiLiteralExpression literalExpression && literalExpression.getValue() instanceof Integer integer) {
-			return integer;
-		}
-
-		if (unwrapped instanceof PsiReferenceExpression referenceExpression) {
-			final String name = referenceExpression.getReferenceName();
-
-			if (name != null && name.startsWith("V")) {
-				if (referenceExpression.getQualifierExpression() instanceof PsiReferenceExpression qualifier && "Constants".equals(qualifier.getReferenceName())) {
-					return RequiresApiInspectionSupport.packVersion(name.substring(1).replace('_', '.'));
-				}
-			}
-		}
-
-		return null;
+		return universe;
 	}
 
 	private static Set<Integer> intersectWithAnnotation(Set<Integer> current, PsiModifierListOwner owner) {
@@ -284,30 +232,18 @@ public final class RequiresApiGuardInspection extends AbstractBaseJavaLocalInspe
 			return current;
 		}
 
-		final Set<Integer> annotationVersions = RequiresApiAnnotationReader.readJavaAnnotationVersions(annotation);
-		return intersect(current, annotationVersions);
+		return VersionConditionSupport.intersect(current, RequiresApiAnnotationReader.readJavaAnnotationVersions(annotation));
 	}
 
 	private static Set<Integer> intersect(Set<Integer> left, Collection<Integer> right) {
-		if (right == null || right.isEmpty()) {
-			return left == null ? Set.of() : left;
-		}
-
-		if (left == null) {
-			return new LinkedHashSet<>(right);
-		}
-
-		final Set<Integer> intersection = new LinkedHashSet<>(left);
-		intersection.retainAll(right);
-		return intersection;
+		return VersionConditionSupport.intersect(left, right);
 	}
 
-	private static final class JavaTokenSets {
-		private static final Set<IElementType> EQUALITY_TOKENS = Set.of(
-				com.intellij.psi.JavaTokenType.EQEQ
-		);
-
-		private JavaTokenSets() {
+	private static Set<Integer> resolveUniverseVersions(PsiElement usage, MultiversionModuleClassifier.ModuleMode moduleMode) {
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.TARGET) {
+			return Set.of(RequiresApiInspectionSupport.packVersion(moduleMode.targetVersion()));
 		}
+
+		return RequiresApiInspectionSupport.resolveProjectVersions(usage);
 	}
 }

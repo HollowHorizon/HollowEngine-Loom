@@ -158,33 +158,11 @@ public final class MultiversionStubGenerator {
 		visitor.visitMaxs(0, 0);
 		visitor.visitEnd();
 
-		writeConstantsMethod(writer, internalName, "is", Opcodes.IF_ICMPNE);
-		writeConstantsMethod(writer, internalName, "isAtLeast", Opcodes.IF_ICMPLT);
-		writeConstantsMethod(writer, internalName, "isAtMost", Opcodes.IF_ICMPGT);
-
 		writer.visitEnd();
 
 		final Path output = outputDir.resolve(internalName + ".class");
 		Files.createDirectories(output.getParent());
 		Files.write(output, writer.toByteArray());
-	}
-
-	private static void writeConstantsMethod(ClassWriter writer, String owner, String name, int falseJumpOpcode) {
-		final MethodVisitor visitor = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, name, "(I)Z", null, null);
-		visitor.visitCode();
-		visitor.visitFieldInsn(Opcodes.GETSTATIC, owner, "MINECRAFT_VERSION", "I");
-		visitor.visitVarInsn(Opcodes.ILOAD, 0);
-		final Label falseLabel = new Label();
-		final Label endLabel = new Label();
-		visitor.visitJumpInsn(falseJumpOpcode, falseLabel);
-		visitor.visitInsn(Opcodes.ICONST_1);
-		visitor.visitJumpInsn(Opcodes.GOTO, endLabel);
-		visitor.visitLabel(falseLabel);
-		visitor.visitInsn(Opcodes.ICONST_0);
-		visitor.visitLabel(endLabel);
-		visitor.visitInsn(Opcodes.IRETURN);
-		visitor.visitMaxs(0, 0);
-		visitor.visitEnd();
 	}
 
 	private void writeClass(Path outputDir, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) throws IOException {
@@ -316,10 +294,7 @@ public final class MultiversionStubGenerator {
 		}
 
 		writer.append("\n");
-		writer.append("\tprivate ").append(simpleName).append("() {\n\t}\n\n");
-		writer.append("\tpublic static boolean is(int version) {\n\t\treturn MINECRAFT_VERSION == version;\n\t}\n\n");
-		writer.append("\tpublic static boolean isAtLeast(int version) {\n\t\treturn MINECRAFT_VERSION >= version;\n\t}\n\n");
-		writer.append("\tpublic static boolean isAtMost(int version) {\n\t\treturn MINECRAFT_VERSION <= version;\n\t}\n");
+		writer.append("\tprivate ").append(simpleName).append("() {\n\t}\n");
 		writer.append("}\n");
 		return writer.toString();
 	}

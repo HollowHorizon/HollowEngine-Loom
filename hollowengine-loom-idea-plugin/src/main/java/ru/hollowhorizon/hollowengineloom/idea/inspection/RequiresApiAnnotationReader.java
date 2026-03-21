@@ -9,7 +9,10 @@ import com.intellij.psi.PsiArrayInitializerMemberValue;
 import com.intellij.psi.PsiLiteralExpression;
 
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
+import org.jetbrains.kotlin.psi.KtCallExpression;
+import org.jetbrains.kotlin.psi.KtCollectionLiteralExpression;
 import org.jetbrains.kotlin.psi.KtExpression;
+import org.jetbrains.kotlin.psi.KtStringTemplateExpression;
 
 final class RequiresApiAnnotationReader {
 	private RequiresApiAnnotationReader() {
@@ -41,21 +44,43 @@ final class RequiresApiAnnotationReader {
 			}
 
 			for (org.jetbrains.kotlin.psi.ValueArgument argument : entry.getValueArguments()) {
-				final KtExpression expression = argument.getArgumentExpression();
-
-				if (expression == null) {
-					continue;
-				}
-
-				final String text = expression.getText().replace("\"", "").replace("'", "");
-
-				if (text.indexOf('.') > 0) {
-					versions.add(RequiresApiInspectionSupport.packVersion(text));
-				}
+				addKotlinVersions(argument.getArgumentExpression(), versions);
 			}
 		}
 
 		return versions;
+	}
+
+	private static void addKotlinVersions(KtExpression expression, Set<Integer> versions) {
+		if (expression == null) {
+			return;
+		}
+
+		if (expression instanceof KtStringTemplateExpression stringTemplateExpression) {
+			final String text = stringTemplateExpression.getText().replace("\"", "").replace("'", "");
+
+			if (text.indexOf('.') > 0) {
+				versions.add(RequiresApiInspectionSupport.packVersion(text));
+			}
+
+			return;
+		}
+
+		if (expression instanceof KtCollectionLiteralExpression collectionLiteralExpression) {
+			collectionLiteralExpression.getInnerExpressions().forEach(innerExpression -> addKotlinVersions(innerExpression, versions));
+			return;
+		}
+
+		if (expression instanceof KtCallExpression callExpression) {
+			callExpression.getValueArguments().forEach(argument -> addKotlinVersions(argument.getArgumentExpression(), versions));
+			return;
+		}
+
+		final String text = expression.getText().replace("\"", "").replace("'", "");
+
+		if (text.indexOf('.') > 0) {
+			versions.add(RequiresApiInspectionSupport.packVersion(text));
+		}
 	}
 
 	private static void addPsiVersion(PsiAnnotationMemberValue annotationValue, Set<Integer> versions) {

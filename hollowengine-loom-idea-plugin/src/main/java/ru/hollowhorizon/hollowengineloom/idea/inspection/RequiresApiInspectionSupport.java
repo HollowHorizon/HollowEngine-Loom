@@ -1,5 +1,7 @@
 package ru.hollowhorizon.hollowengineloom.idea.inspection;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -10,6 +12,7 @@ import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiModifierListOwner;
+import com.intellij.psi.util.PsiTreeUtil;
 
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtClassOrObject;
@@ -71,6 +74,16 @@ final class RequiresApiInspectionSupport {
 		return "This API is not available on target " + targetVersion + ". It is only available on " + sorted + ".";
 	}
 
+	static String buildImpossibleConditionMessage() {
+		return "This condition is impossible for all configured Minecraft versions.";
+	}
+
+	static String buildConstantConditionMessage(boolean result) {
+		return result
+				? "This condition is always true for all configured Minecraft versions."
+				: "This condition is always false for all configured Minecraft versions.";
+	}
+
 	static String buildCompletionHint(Set<Integer> requiredVersions, Set<Integer> projectVersions) {
 		final Set<Integer> displayVersions = new LinkedHashSet<>(requiredVersions);
 
@@ -91,19 +104,37 @@ final class RequiresApiInspectionSupport {
 		}
 
 		final Set<Integer> versions = new LinkedHashSet<>();
-		addJavaAnnotationVersions(owner, versions);
+		collectDirectRequiresApi(owner, versions, Collections.newSetFromMap(new IdentityHashMap<>()));
 
-		final PsiElement navigation = owner.getNavigationElement();
+		return versions;
+	}
 
-		if (navigation instanceof PsiModifierListOwner navigationOwner && navigationOwner != owner) {
-			addJavaAnnotationVersions(navigationOwner, versions);
+	private static void collectDirectRequiresApi(PsiElement element, Set<Integer> versions, Set<PsiElement> visited) {
+		if (element == null || !visited.add(element)) {
+			return;
 		}
 
-		if (navigation instanceof KtDeclaration declaration) {
+		if (element instanceof PsiModifierListOwner owner) {
+			addJavaAnnotationVersions(owner, versions);
+		}
+
+		if (element instanceof KtDeclaration declaration) {
 			addKotlinAnnotationVersions(declaration, versions);
 		}
 
-		return versions;
+		if (element instanceof PsiModifierListOwner owner) {
+			final PsiElement original = owner.getOriginalElement();
+
+			if (original != null && original != element) {
+				collectDirectRequiresApi(original, versions, visited);
+			}
+		}
+
+		final PsiElement navigation = element.getNavigationElement();
+
+		if (navigation != null && navigation != element) {
+			collectDirectRequiresApi(navigation, versions, visited);
+		}
 	}
 
 	static boolean isProjectSource(PsiModifierListOwner owner) {
@@ -149,6 +180,53 @@ final class RequiresApiInspectionSupport {
 		}
 
 		return MultiversionMetadataResolver.resolveVersions(owner, owner.getProject());
+	}
+
+	static Set<Integer> resolveSymbolVersions(PsiElement element) {
+		if (element == null) {
+			return Set.of();
+		}
+
+		if (element instanceof PsiModifierListOwner owner) {
+			return resolveSymbolVersions(owner);
+		}
+
+		if (element instanceof KtDeclaration declaration) {
+			final Set<Integer> versions = new LinkedHashSet<>();
+			addKotlinAnnotationVersions(declaration, versions);
+
+			if (!versions.isEmpty()) {
+				return versions;
+			}
+		}
+
+		final PsiModifierListOwner ownerParent = PsiTreeUtil.getParentOfType(element, PsiModifierListOwner.class, false);
+
+		if (ownerParent != null && ownerParent != element) {
+			final Set<Integer> versions = resolveSymbolVersions(ownerParent);
+
+			if (!versions.isEmpty()) {
+				return versions;
+			}
+		}
+
+		final KtDeclaration declarationParent = PsiTreeUtil.getParentOfType(element, KtDeclaration.class, false);
+
+		if (declarationParent != null && declarationParent != element) {
+			final Set<Integer> versions = resolveSymbolVersions(declarationParent);
+
+			if (!versions.isEmpty()) {
+				return versions;
+			}
+		}
+
+		final PsiElement navigation = element.getNavigationElement();
+
+		if (navigation != null && navigation != element) {
+			return resolveSymbolVersions(navigation);
+		}
+
+		return Set.of();
 	}
 
 	static boolean hasSubscribeEvent(PsiModifierListOwner owner) {

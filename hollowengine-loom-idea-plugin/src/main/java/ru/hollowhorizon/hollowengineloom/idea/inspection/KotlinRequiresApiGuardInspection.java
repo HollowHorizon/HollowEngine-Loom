@@ -1,7 +1,9 @@
 package ru.hollowhorizon.hollowengineloom.idea.inspection;
 
-import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 
 import com.intellij.codeInspection.LocalQuickFix;
 import com.intellij.codeInspection.LocalInspectionTool;
@@ -9,59 +11,96 @@ import com.intellij.codeInspection.ProblemsHolder;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.psi.PsiAnnotation;
-import com.intellij.psi.PsiAnnotationMemberValue;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiElementVisitor;
-import com.intellij.psi.PsiLiteralExpression;
 import com.intellij.psi.PsiMember;
-import com.intellij.psi.PsiModifierListOwner;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.util.PsiTreeUtil;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
-import org.jetbrains.kotlin.psi.KtBinaryExpression;
 import org.jetbrains.kotlin.psi.KtCallExpression;
 import org.jetbrains.kotlin.psi.KtClassOrObject;
 import org.jetbrains.kotlin.psi.KtExpression;
 import org.jetbrains.kotlin.psi.KtIfExpression;
-import org.jetbrains.kotlin.psi.KtNameReferenceExpression;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
-import org.jetbrains.kotlin.psi.KtParenthesizedExpression;
 import org.jetbrains.kotlin.psi.KtQualifiedExpression;
 import org.jetbrains.kotlin.psi.KtReferenceExpression;
+import org.jetbrains.kotlin.psi.KtSimpleNameExpression;
 import org.jetbrains.kotlin.psi.KtVisitorVoid;
 
 public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool {
 	@Override
 	public @NotNull PsiElementVisitor buildVisitor(@NotNull ProblemsHolder holder, boolean isOnTheFly) {
+		final Set<PsiElement> reportedAnchors = Collections.newSetFromMap(new IdentityHashMap<>());
+
 		return new KtVisitorVoid() {
 			@Override
 			public void visitCallExpression(@NotNull KtCallExpression expression) {
 				super.visitCallExpression(expression);
-				checkUsage(expression, resolveTarget(expression.getCalleeExpression()), holder);
+				checkUsage(expression, resolveTarget(expression.getCalleeExpression()), holder, reportedAnchors);
 			}
 
 			@Override
 			public void visitReferenceExpression(@NotNull KtReferenceExpression expression) {
 				super.visitReferenceExpression(expression);
 
-				if (expression.getParent() instanceof KtCallExpression) {
+				if (isPartOfCallCallee(expression)) {
 					return;
 				}
 
-				checkUsage(expression, resolveTarget(expression), holder);
+				checkUsage(expression, resolveTarget(expression), holder, reportedAnchors);
+			}
+
+			@Override
+			public void visitIfExpression(@NotNull KtIfExpression expression) {
+				super.visitIfExpression(expression);
+				checkCondition(expression, holder);
 			}
 		};
 	}
 
-	private static void checkUsage(PsiElement usage, PsiModifierListOwner target, ProblemsHolder holder) {
+	private static void checkCondition(KtIfExpression ifExpression, ProblemsHolder holder) {
+		final KtExpression condition = ifExpression.getCondition();
+
+		if (condition == null) {
+			return;
+		}
+
+		final Module module = ModuleUtilCore.findModuleForPsiElement(condition);
+		final MultiversionModuleClassifier.ModuleMode moduleMode = resolveModuleMode(condition, module);
+
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.NONE) {
+			return;
+		}
+
+		final Set<Integer> universe = collectContextVersions(condition, resolveUniverseVersions(condition, moduleMode));
+		final VersionConditionSupport.Evaluation evaluation = KotlinVersionConditionEvaluator.evaluate(condition, universe);
+
+		if (evaluation == null) {
+			return;
+		}
+
+		if (evaluation.trueVersions().isEmpty()) {
+			holder.registerProblem(condition, RequiresApiInspectionSupport.buildConstantConditionMessage(false));
+		} else if (evaluation.falseVersions().isEmpty()) {
+			holder.registerProblem(condition, RequiresApiInspectionSupport.buildConstantConditionMessage(true));
+		}
+	}
+
+	private static void checkUsage(PsiElement usage, PsiElement target, ProblemsHolder holder, Set<PsiElement> reportedAnchors) {
 		if (target == null || usage == null) {
 			return;
 		}
 
-		final Module module = ModuleUtilCore.findModuleForPsiElement(usage);
-		final MultiversionModuleClassifier.ModuleMode moduleMode = MultiversionModuleClassifier.classify(module);
+		final PsiElement anchor = usageAnchor(usage);
+
+		if (!reportedAnchors.add(anchor)) {
+			return;
+		}
+
+		final Module module = ModuleUtilCore.findModuleForPsiElement(anchor);
+		final MultiversionModuleClassifier.ModuleMode moduleMode = resolveModuleMode(anchor, module);
 
 		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.NONE) {
 			return;
@@ -73,29 +112,50 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 			return;
 		}
 
+		final Set<Integer> universe = resolveUniverseVersions(anchor, moduleMode);
+
+		if (universe.isEmpty()) {
+			return;
+		}
+
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.COMMON
+				&& RequiresApiInspectionSupport.isAvailableEverywhere(requiredVersions, universe)) {
+			return;
+		}
+
+		final Set<Integer> contextVersions = collectContextVersions(anchor, universe);
+
+		if (contextVersions.isEmpty()) {
+			return;
+		}
+
+		if (requiredVersions.containsAll(contextVersions)) {
+			return;
+		}
+
 		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.TARGET) {
-			final int targetVersion = RequiresApiInspectionSupport.packVersion(moduleMode.targetVersion());
-
-			if (!requiredVersions.contains(targetVersion)) {
-				holder.registerProblem(usage, RequiresApiInspectionSupport.buildTargetMismatchMessage(requiredVersions, moduleMode.targetVersion()));
-			}
-
+			holder.registerProblem(anchor, RequiresApiInspectionSupport.buildTargetMismatchMessage(requiredVersions, moduleMode.targetVersion()));
 			return;
 		}
 
-		final Set<Integer> projectVersions = RequiresApiInspectionSupport.resolveProjectVersions(usage);
+		holder.registerProblem(anchor, RequiresApiInspectionSupport.buildMessage(requiredVersions), createQuickFixes(anchor, requiredVersions));
+	}
 
-		if (RequiresApiInspectionSupport.isAvailableEverywhere(requiredVersions, projectVersions)) {
-			return;
+	private static PsiElement usageAnchor(PsiElement usage) {
+		PsiElement anchor = usage;
+		PsiElement current = usage;
+
+		while (current.getParent() instanceof KtQualifiedExpression qualifiedExpression
+				&& qualifiedExpression.getSelectorExpression() == current) {
+			anchor = qualifiedExpression;
+			current = qualifiedExpression;
 		}
 
-		final Set<Integer> contextVersions = collectContextVersions(usage);
-
-		if (!contextVersions.isEmpty() && requiredVersions.containsAll(contextVersions)) {
-			return;
+		if (anchor.getParent() instanceof KtCallExpression callExpression && callExpression.getCalleeExpression() == anchor) {
+			return callExpression;
 		}
 
-		holder.registerProblem(usage, RequiresApiInspectionSupport.buildMessage(requiredVersions), createQuickFixes(usage, requiredVersions));
+		return anchor;
 	}
 
 	private static LocalQuickFix[] createQuickFixes(PsiElement usage, Set<Integer> requiredVersions) {
@@ -109,213 +169,201 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 		return fixes.toArray(LocalQuickFix[]::new);
 	}
 
-	private static PsiModifierListOwner resolveTarget(KtExpression expression) {
+	private static PsiElement resolveTarget(KtExpression expression) {
 		if (expression == null) {
 			return null;
 		}
 
-		final PsiReference[] references = expression.getReferences();
+		final PsiElement direct = resolveFromReferences(expression);
 
-		for (PsiReference reference : references) {
+		if (direct != null) {
+			return direct;
+		}
+
+		for (PsiReference reference : expression.getReferences()) {
 			final PsiElement resolved = reference.resolve();
 
-			if (resolved instanceof PsiModifierListOwner owner) {
-				return owner;
+			if (resolved != null) {
+				return resolved;
+			}
+		}
+
+		if (expression instanceof KtCallExpression callExpression && callExpression.getCalleeExpression() != null) {
+			final PsiElement calleeDirect = resolveFromReferences(callExpression.getCalleeExpression());
+
+			if (calleeDirect != null) {
+				return calleeDirect;
+			}
+
+			for (PsiReference reference : callExpression.getCalleeExpression().getReferences()) {
+				final PsiElement resolved = reference.resolve();
+
+				if (resolved != null) {
+					return resolved;
+				}
+			}
+
+			if (callExpression.getCalleeExpression() instanceof KtSimpleNameExpression simpleNameExpression) {
+				final PsiElement localDeclaration = findLocalKotlinFunction(simpleNameExpression);
+
+				if (localDeclaration != null) {
+					return localDeclaration;
+				}
+			}
+		}
+
+		if (expression.getParent() instanceof org.jetbrains.kotlin.psi.KtQualifiedExpression qualifiedExpression) {
+			final PsiElement qualifiedDirect = resolveFromReferences(qualifiedExpression);
+
+			if (qualifiedDirect != null) {
+				return qualifiedDirect;
+			}
+
+			for (PsiReference reference : qualifiedExpression.getReferences()) {
+				final PsiElement resolved = reference.resolve();
+
+				if (resolved != null) {
+					return resolved;
+				}
 			}
 		}
 
 		return null;
 	}
 
-	private static Set<Integer> collectRequiredVersions(PsiModifierListOwner target) {
+	private static PsiElement resolveFromReferences(KtExpression expression) {
+		final PsiReference reference = expression.getReference();
+
+		return reference == null ? null : reference.resolve();
+	}
+
+	private static PsiElement findLocalKotlinFunction(KtSimpleNameExpression expression) {
+		final String name = expression.getReferencedName();
+
+		if (name == null || expression.getContainingFile() == null) {
+			return null;
+		}
+
+		for (KtNamedFunction function : PsiTreeUtil.findChildrenOfType(expression.getContainingFile(), KtNamedFunction.class)) {
+			if (name.equals(function.getName())) {
+				return function;
+			}
+		}
+
+		return null;
+	}
+
+	private static boolean isPartOfCallCallee(KtReferenceExpression expression) {
+		if (expression.getParent() instanceof KtCallExpression) {
+			return true;
+		}
+
+		if (expression.getParent() instanceof KtQualifiedExpression qualifiedExpression
+				&& qualifiedExpression.getSelectorExpression() == expression
+				&& qualifiedExpression.getParent() instanceof KtCallExpression) {
+			return true;
+		}
+
+		PsiElement current = expression;
+
+		while (current.getParent() instanceof KtQualifiedExpression qualifiedExpression
+				&& qualifiedExpression.getSelectorExpression() == current) {
+			current = qualifiedExpression;
+
+			if (current.getParent() instanceof KtCallExpression) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static Set<Integer> collectRequiredVersions(PsiElement target) {
 		Set<Integer> versions = intersect(null, RequiresApiInspectionSupport.resolveSymbolVersions(target));
 
 		if (target instanceof PsiMember member) {
 			versions = intersect(versions, RequiresApiInspectionSupport.resolveSymbolVersions(member.getContainingClass()));
 		}
 
+		if (target instanceof KtNamedFunction function) {
+			versions = intersect(versions, RequiresApiInspectionSupport.resolveSymbolVersions(PsiTreeUtil.getParentOfType(function, KtClassOrObject.class)));
+		}
+
 		return versions == null ? Set.of() : versions;
 	}
 
-	private static Set<Integer> collectContextVersions(PsiElement usage) {
-		Set<Integer> versions = null;
-
+	private static Set<Integer> collectContextVersions(PsiElement usage, Set<Integer> universe) {
+		Set<Integer> versions = VersionConditionSupport.copy(universe);
 		versions = intersectWithKotlinAnnotations(versions, PsiTreeUtil.getParentOfType(usage, KtNamedFunction.class));
 		versions = intersectWithKotlinAnnotations(versions, PsiTreeUtil.getParentOfType(usage, KtClassOrObject.class));
 
-		PsiElement current = usage;
-		final KtNamedFunction function = PsiTreeUtil.getParentOfType(usage, KtNamedFunction.class);
-		final KtClassOrObject klass = PsiTreeUtil.getParentOfType(usage, KtClassOrObject.class);
+		final List<KtIfExpression> ifExpressions = collectEnclosingIfExpressions(usage).stream()
+				.sorted((left, right) -> Integer.compare(depthFrom(left, usage), depthFrom(right, usage)))
+				.toList();
 
-		while (current != null && current != function && current != klass) {
-			if (current.getParent() instanceof KtIfExpression ifExpression) {
-				final Set<Integer> branchVersions = resolveThenBranchVersions(ifExpression, current);
+		for (KtIfExpression ifExpression : ifExpressions) {
+			final Set<Integer> branchVersions = resolveBranchVersions(ifExpression, usage, versions);
+			versions = branchVersions.isEmpty() ? Set.of() : branchVersions;
+		}
 
-				if (!branchVersions.isEmpty()) {
-					versions = intersect(versions, branchVersions);
-				}
+		return versions;
+	}
+
+	private static int depthFrom(PsiElement ancestor, PsiElement descendant) {
+		int depth = 0;
+		PsiElement current = descendant;
+
+		while (current != null && current != ancestor) {
+			depth++;
+			current = current.getParent();
+		}
+
+		return depth;
+	}
+
+	private static List<KtIfExpression> collectEnclosingIfExpressions(PsiElement usage) {
+		final java.util.ArrayList<KtIfExpression> ifExpressions = new java.util.ArrayList<>();
+		PsiElement current = usage.getParent();
+
+		while (current != null) {
+			if (current instanceof KtIfExpression ifExpression) {
+				ifExpressions.add(ifExpression);
 			}
 
 			current = current.getParent();
 		}
 
-		return versions == null ? Set.of() : versions;
+		return ifExpressions;
 	}
 
-	private static Set<Integer> resolveThenBranchVersions(KtIfExpression ifExpression, PsiElement elementInBranch) {
+	private static Set<Integer> resolveBranchVersions(KtIfExpression ifExpression, PsiElement elementInBranch, Set<Integer> universe) {
+		final VersionConditionSupport.Evaluation evaluation = KotlinVersionConditionEvaluator.evaluate(ifExpression.getCondition(), universe);
+
+		if (evaluation == null) {
+			return universe;
+		}
+
 		final KtExpression thenBranch = ifExpression.getThen();
 
 		if (thenBranch != null && PsiTreeUtil.isAncestor(thenBranch, elementInBranch, false)) {
-			return resolveExactVersions(ifExpression.getCondition());
+			return evaluation.trueVersions();
 		}
 
-		return Set.of();
-	}
+		final KtExpression elseBranch = ifExpression.getElse();
 
-	private static Set<Integer> resolveExactVersions(KtExpression expression) {
-		final KtExpression unwrapped = unwrap(expression);
-
-		if (unwrapped instanceof KtCallExpression callExpression) {
-			return resolveConstantsIsCall(callExpression);
+		if (elseBranch != null && PsiTreeUtil.isAncestor(elseBranch, elementInBranch, false)) {
+			return evaluation.falseVersions();
 		}
 
-		if (unwrapped instanceof KtBinaryExpression binaryExpression) {
-			return resolveVersionEquality(binaryExpression);
-		}
-
-		return Set.of();
-	}
-
-	private static Set<Integer> resolveConstantsIsCall(KtCallExpression callExpression) {
-		if (!(callExpression.getParent() instanceof KtQualifiedExpression qualifiedExpression)) {
-			return Set.of();
-		}
-
-		if (!(qualifiedExpression.getReceiverExpression() instanceof KtNameReferenceExpression qualifier) || !"Constants".equals(qualifier.getReferencedName())) {
-			return Set.of();
-		}
-
-		if (qualifiedExpression.getSelectorExpression() != callExpression) {
-			return Set.of();
-		}
-
-		if (!(callExpression.getCalleeExpression() instanceof KtNameReferenceExpression selector) || !isConstantsIsSelector(selector)) {
-			return Set.of();
-		}
-
-		if (callExpression.getValueArguments().size() != 1) {
-			return Set.of();
-		}
-
-		final Integer packed = readPackedVersion(callExpression.getValueArguments().get(0).getArgumentExpression());
-		return packed == null ? Set.of() : Set.of(packed);
-	}
-
-	private static boolean isConstantsIsSelector(KtNameReferenceExpression selector) {
-		final String referencedName = selector.getReferencedName();
-		return "is".equals(referencedName) || "`is`".equals(selector.getText());
-	}
-
-	private static Set<Integer> resolveVersionEquality(KtBinaryExpression binaryExpression) {
-		if (binaryExpression.getOperationToken() != org.jetbrains.kotlin.lexer.KtTokens.EQEQ) {
-			return Set.of();
-		}
-
-		final KtExpression left = unwrap(binaryExpression.getLeft());
-		final KtExpression right = unwrap(binaryExpression.getRight());
-
-		if (left == null || right == null) {
-			return Set.of();
-		}
-
-		if (isMinecraftVersionField(left)) {
-			final Integer packed = readPackedVersion(right);
-			return packed == null ? Set.of() : Set.of(packed);
-		}
-
-		if (isMinecraftVersionField(right)) {
-			final Integer packed = readPackedVersion(left);
-			return packed == null ? Set.of() : Set.of(packed);
-		}
-
-		return Set.of();
-	}
-
-	private static boolean isMinecraftVersionField(KtExpression expression) {
-		if (!(expression instanceof KtQualifiedExpression qualifiedExpression)) {
-			return false;
-		}
-
-		if (!(qualifiedExpression.getReceiverExpression() instanceof KtNameReferenceExpression qualifier) || !"Constants".equals(qualifier.getReferencedName())) {
-			return false;
-		}
-
-		return qualifiedExpression.getSelectorExpression() instanceof KtNameReferenceExpression selector
-				&& "MINECRAFT_VERSION".equals(selector.getReferencedName());
-	}
-
-	private static Integer readPackedVersion(KtExpression expression) {
-		final KtExpression unwrapped = unwrap(expression);
-
-		if (unwrapped == null) {
-			return null;
-		}
-
-		if (unwrapped instanceof KtQualifiedExpression qualifiedExpression
-				&& qualifiedExpression.getReceiverExpression() instanceof KtNameReferenceExpression qualifier
-				&& "Constants".equals(qualifier.getReferencedName())
-				&& qualifiedExpression.getSelectorExpression() instanceof KtNameReferenceExpression selector
-				&& selector.getReferencedName() != null
-				&& selector.getReferencedName().startsWith("V")) {
-			return RequiresApiInspectionSupport.packVersion(selector.getReferencedName().substring(1).replace('_', '.'));
-		}
-
-		try {
-			return Integer.valueOf(unwrapped.getText());
-		} catch (NumberFormatException ignored) {
-			return null;
-		}
-	}
-
-	private static KtExpression unwrap(KtExpression expression) {
-		KtExpression current = expression;
-
-		while (current instanceof KtParenthesizedExpression parenthesizedExpression) {
-			current = parenthesizedExpression.getExpression();
-		}
-
-		return current;
-	}
-
-	private static Set<Integer> intersectWithJavaAnnotation(Set<Integer> current, PsiModifierListOwner owner) {
-		if (owner == null) {
-			return current;
-		}
-
-		final PsiAnnotation annotation = owner.getAnnotation(HollowEngineConstants.REQUIRES_API_FQN);
-
-		if (annotation == null) {
-			return current;
-		}
-
-		final Set<Integer> annotationVersions = RequiresApiAnnotationReader.readJavaAnnotationVersions(annotation);
-		return intersect(current, annotationVersions);
+		return universe;
 	}
 
 	private static Set<Integer> intersectWithKotlinAnnotations(Set<Integer> current, KtNamedFunction function) {
-		if (function == null) {
-			return current;
-		}
-
-		return intersect(current, readKotlinVersions(function.getAnnotationEntries()));
+		return function == null ? current : intersect(current, readKotlinVersions(function.getAnnotationEntries()));
 	}
 
 	private static Set<Integer> intersectWithKotlinAnnotations(Set<Integer> current, KtClassOrObject klass) {
-		if (klass == null) {
-			return current;
-		}
-
-		return intersect(current, readKotlinVersions(klass.getAnnotationEntries()));
+		return klass == null ? current : intersect(current, readKotlinVersions(klass.getAnnotationEntries()));
 	}
 
 	private static Set<Integer> readKotlinVersions(Iterable<KtAnnotationEntry> entries) {
@@ -323,16 +371,26 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 	}
 
 	private static Set<Integer> intersect(Set<Integer> left, Set<Integer> right) {
-		if (right == null || right.isEmpty()) {
-			return left == null ? Set.of() : left;
+		return VersionConditionSupport.intersect(left, right);
+	}
+
+	private static Set<Integer> resolveUniverseVersions(PsiElement usage, MultiversionModuleClassifier.ModuleMode moduleMode) {
+		if (moduleMode.kind() == MultiversionModuleClassifier.Kind.TARGET) {
+			return Set.of(RequiresApiInspectionSupport.packVersion(moduleMode.targetVersion()));
 		}
 
-		if (left == null) {
-			return new LinkedHashSet<>(right);
+		return RequiresApiInspectionSupport.resolveProjectVersions(usage);
+	}
+
+	private static MultiversionModuleClassifier.ModuleMode resolveModuleMode(PsiElement element, Module module) {
+		final MultiversionModuleClassifier.ModuleMode mode = MultiversionModuleClassifier.classify(module);
+
+		if (mode.kind() != MultiversionModuleClassifier.Kind.NONE) {
+			return mode;
 		}
 
-		final Set<Integer> intersection = new LinkedHashSet<>(left);
-		intersection.retainAll(right);
-		return intersection;
+		return RequiresApiInspectionSupport.resolveProjectVersions(element).isEmpty()
+				? mode
+				: MultiversionModuleClassifier.ModuleMode.common(null);
 	}
 }

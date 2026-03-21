@@ -8,7 +8,7 @@ public final class FabricTarget1211 {
 	}
 
 	public boolean isTargetVersion() {
-		return Constants.is(1211) && Constants.isAtLeast(1211);
+		return Constants.MINECRAFT == Constants.V1_21_1 && Constants.MINECRAFT >= Constants.V1_21_1;
 	}
 
 	public int x() {

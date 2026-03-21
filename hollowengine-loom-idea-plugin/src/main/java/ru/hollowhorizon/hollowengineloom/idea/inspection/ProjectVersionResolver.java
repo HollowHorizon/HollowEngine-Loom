@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
+import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 
@@ -47,8 +48,22 @@ final class ProjectVersionResolver {
 	}
 
 	static Path moduleDirectory(Module module) {
+		for (VirtualFile contentRoot : ModuleRootManager.getInstance(module).getContentRoots()) {
+			if (contentRoot != null) {
+				return toPath(contentRoot);
+			}
+		}
+
 		final VirtualFile moduleFile = module.getModuleFile();
-		return moduleFile == null || moduleFile.getParent() == null ? null : moduleFile.getParent().toNioPath();
+		return moduleFile == null || moduleFile.getParent() == null ? null : toPath(moduleFile.getParent());
+	}
+
+	private static Path toPath(VirtualFile file) {
+		try {
+			return file.toNioPath();
+		} catch (UnsupportedOperationException ignored) {
+			return Path.of(file.getPath());
+		}
 	}
 
 	private static void collectFromDirectory(Path directory, Set<String> versions) {

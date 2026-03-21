@@ -39,9 +39,12 @@ class MultiversionConstantsGeneratorTest extends Specification {
 
 		then:
 		text.contains("public static final int MINECRAFT_VERSION = 1211;")
+		text.contains("public static final int MINECRAFT = MINECRAFT_VERSION;")
 		text.contains("public static final int MC_MAJOR = 1;")
 		text.contains("public static final int MC_MINOR = 21;")
 		text.contains("public static final int MC_PATCH = 1;")
-		text.contains("public static boolean isAtLeast(int version)")
+		!text.contains("public static boolean is(")
+		!text.contains("public static boolean isAtLeast")
+		!text.contains("public static boolean isAtMost")
 	}
 }

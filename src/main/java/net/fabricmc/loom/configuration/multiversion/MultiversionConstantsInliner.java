@@ -25,6 +25,7 @@
 package net.fabricmc.loom.configuration.multiversion;
 
 import java.io.IOException;
+import java.util.BitSet;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -42,12 +43,13 @@ import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.IntInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LdcInsnNode;
-import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 public final class MultiversionConstantsInliner {
 	private final String constantsClassInternalName;
 	private final Map<String, Integer> constantValues = new LinkedHashMap<>();
+	private final MultiversionBytecodeConditionEvaluator conditionEvaluator;
+	private final BitSet targetMask;
 
 	public MultiversionConstantsInliner(String constantsClassName, String targetVersion, List<String> availableVersions) {
 		this.constantsClassInternalName = constantsClassName.replace('.', '/');
@@ -61,6 +63,10 @@ public final class MultiversionConstantsInliner {
 		for (String version : availableVersions) {
 			constantValues.put("V" + version.replaceAll("[^A-Za-z0-9]", "_"), MultiversionConstantsGenerator.VersionParts.parse(version).packed());
 		}
+
+		this.conditionEvaluator = new MultiversionBytecodeConditionEvaluator(constantsClassName, availableVersions);
+		this.targetMask = new BitSet(availableVersions.size());
+		this.targetMask.set(availableVersions.indexOf(targetVersion));
 	}
 
 	public void inlineDirectories(Iterable<Path> directories) throws IOException {
@@ -125,32 +131,6 @@ public final class MultiversionConstantsInliner {
 				}
 			} else if (instruction instanceof JumpInsnNode jumpInsn) {
 				changed |= simplifyConditionalJump(instructions, jumpInsn);
-			} else if (instruction instanceof MethodInsnNode methodInsn
-					&& methodInsn.getOpcode() == Opcodes.INVOKESTATIC
-					&& constantsClassInternalName.equals(methodInsn.owner)
-					&& "(I)Z".equals(methodInsn.desc)) {
-				if (isConditionalJump(nextMeaningful(instruction))) {
-					instruction = next;
-					continue;
-				}
-
-				final AbstractInsnNode previous = previousMeaningful(instruction);
-				final Integer value = readIntConstant(previous);
-
-				if (value != null) {
-					final boolean result = switch (methodInsn.name) {
-					case "is" -> constantValues.get("MINECRAFT_VERSION").intValue() == value.intValue();
-					case "isAtLeast" -> constantValues.get("MINECRAFT_VERSION") >= value;
-					case "isAtMost" -> constantValues.get("MINECRAFT_VERSION") <= value;
-					default -> false;
-					};
-
-					if (isConstantInstruction(previous)) {
-						instructions.remove(previous);
-						instructions.set(methodInsn, new InsnNode(result ? Opcodes.ICONST_1 : Opcodes.ICONST_0));
-						changed = true;
-					}
-				}
 			}
 
 			instruction = next;
@@ -160,58 +140,33 @@ public final class MultiversionConstantsInliner {
 	}
 
 	private boolean simplifyConditionalJump(InsnList instructions, JumpInsnNode jumpInsn) {
-		final int opcode = jumpInsn.getOpcode();
+		final AbstractInsnNode[] instructionArray = instructions.toArray();
+		final int branchIndex = indexOf(instructionArray, jumpInsn);
 
-		if (opcode == Opcodes.IFEQ || opcode == Opcodes.IFNE) {
-			final AbstractInsnNode helperInstruction = previousMeaningful(jumpInsn);
-
-			if (helperInstruction instanceof MethodInsnNode methodInsn
-					&& methodInsn.getOpcode() == Opcodes.INVOKESTATIC
-					&& constantsClassInternalName.equals(methodInsn.owner)
-					&& "(I)Z".equals(methodInsn.desc)) {
-				final AbstractInsnNode argumentInstruction = previousMeaningful(methodInsn);
-				final Integer value = readIntConstant(argumentInstruction);
-
-				if (value != null && isConstantInstruction(argumentInstruction)) {
-					final boolean result = switch (methodInsn.name) {
-					case "is" -> constantValues.get("MINECRAFT_VERSION").intValue() == value.intValue();
-					case "isAtLeast" -> constantValues.get("MINECRAFT_VERSION") >= value;
-					case "isAtMost" -> constantValues.get("MINECRAFT_VERSION") <= value;
-					default -> false;
-					};
-					removeInstruction(instructions, argumentInstruction);
-					removeInstruction(instructions, methodInsn);
-					applyResolvedJump(instructions, jumpInsn, opcode, result);
-					return true;
-				}
-			}
+		if (branchIndex < 0) {
+			return false;
 		}
 
-		if (opcode == Opcodes.IF_ICMPEQ || opcode == Opcodes.IF_ICMPNE || opcode == Opcodes.IF_ICMPLT
-				|| opcode == Opcodes.IF_ICMPGE || opcode == Opcodes.IF_ICMPGT || opcode == Opcodes.IF_ICMPLE) {
-			final AbstractInsnNode rightInstruction = previousMeaningful(jumpInsn);
-			final AbstractInsnNode leftInstruction = previousMeaningful(rightInstruction);
-			final Integer right = readIntConstant(rightInstruction);
-			final Integer left = readIntConstant(leftInstruction);
+		final MultiversionBytecodeConditionEvaluator.BranchEvaluation evaluation = conditionEvaluator.evaluate(instructionArray, branchIndex, targetMask);
 
-			if (left != null && right != null && isConstantInstruction(leftInstruction) && isConstantInstruction(rightInstruction)) {
-				final boolean result = switch (opcode) {
-				case Opcodes.IF_ICMPEQ -> left.intValue() == right.intValue();
-				case Opcodes.IF_ICMPNE -> left.intValue() != right.intValue();
-				case Opcodes.IF_ICMPLT -> left.intValue() < right.intValue();
-				case Opcodes.IF_ICMPGE -> left.intValue() >= right.intValue();
-				case Opcodes.IF_ICMPGT -> left.intValue() > right.intValue();
-				case Opcodes.IF_ICMPLE -> left.intValue() <= right.intValue();
-				default -> false;
-				};
-				removeInstruction(instructions, leftInstruction);
-				removeInstruction(instructions, rightInstruction);
-				applyResolvedJump(instructions, jumpInsn, opcode, result);
-				return true;
-			}
+		if (evaluation == null) {
+			return false;
 		}
 
-		return false;
+		final Boolean result = evaluation.jumpVersions().isEmpty()
+				? Boolean.FALSE
+				: evaluation.fallthroughVersions().isEmpty() ? Boolean.TRUE : null;
+
+		if (result == null) {
+			return false;
+		}
+
+		for (AbstractInsnNode consumedInstruction : evaluation.consumedInstructions()) {
+			removeInstruction(instructions, consumedInstruction);
+		}
+
+		applyResolvedJump(instructions, jumpInsn, jumpInsn.getOpcode(), result);
+		return true;
 	}
 
 	private static void applyResolvedJump(InsnList instructions, JumpInsnNode jumpInsn, int opcode, boolean result) {
@@ -238,60 +193,20 @@ public final class MultiversionConstantsInliner {
 		return current;
 	}
 
-	private static AbstractInsnNode nextMeaningful(AbstractInsnNode instruction) {
-		AbstractInsnNode current = instruction == null ? null : instruction.getNext();
-
-		while (current != null && (current.getType() == AbstractInsnNode.FRAME || current.getType() == AbstractInsnNode.LINE || current.getType() == AbstractInsnNode.LABEL)) {
-			current = current.getNext();
-		}
-
-		return current;
-	}
-
-	private static boolean isConditionalJump(AbstractInsnNode instruction) {
-		if (!(instruction instanceof JumpInsnNode jumpInsn)) {
-			return false;
-		}
-
-		final int opcode = jumpInsn.getOpcode();
-		return opcode == Opcodes.IFEQ || opcode == Opcodes.IFNE;
-	}
-
-	private static Integer readIntConstant(AbstractInsnNode instruction) {
-		if (instruction == null) {
-			return null;
-		}
-
-		return switch (instruction.getOpcode()) {
-		case Opcodes.ICONST_M1 -> -1;
-		case Opcodes.ICONST_0 -> 0;
-		case Opcodes.ICONST_1 -> 1;
-		case Opcodes.ICONST_2 -> 2;
-		case Opcodes.ICONST_3 -> 3;
-		case Opcodes.ICONST_4 -> 4;
-		case Opcodes.ICONST_5 -> 5;
-		case Opcodes.BIPUSH, Opcodes.SIPUSH -> ((IntInsnNode) instruction).operand;
-		default -> instruction instanceof LdcInsnNode ldcInsn && ldcInsn.cst instanceof Integer integer ? integer : null;
-		};
-	}
-
-	private static boolean isConstantInstruction(AbstractInsnNode instruction) {
-		if (instruction == null) {
-			return false;
-		}
-
-		final int opcode = instruction.getOpcode();
-		return switch (opcode) {
-		case Opcodes.ICONST_M1, Opcodes.ICONST_0, Opcodes.ICONST_1, Opcodes.ICONST_2, Opcodes.ICONST_3, Opcodes.ICONST_4, Opcodes.ICONST_5,
-				Opcodes.BIPUSH, Opcodes.SIPUSH -> true;
-		default -> instruction instanceof LdcInsnNode ldcInsn && ldcInsn.cst instanceof Integer;
-		};
-	}
-
 	private static void removeInstruction(InsnList instructions, AbstractInsnNode instruction) {
 		if (instruction != null && (instruction == instructions.getFirst() || instruction.getPrevious() != null || instruction.getNext() != null)) {
 			instructions.remove(instruction);
 		}
+	}
+
+	private static int indexOf(AbstractInsnNode[] instructions, AbstractInsnNode target) {
+		for (int index = 0; index < instructions.length; index++) {
+			if (instructions[index] == target) {
+				return index;
+			}
+		}
+
+		return -1;
 	}
 
 	private static AbstractInsnNode intInstruction(int value) {

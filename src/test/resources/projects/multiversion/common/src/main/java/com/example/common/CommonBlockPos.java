@@ -9,7 +9,7 @@ public final class CommonBlockPos {
 	}
 
 	public void test() {
-		if (Constants.is(1211)) {
+		if (Constants.MINECRAFT == Constants.V1_21_1) {
 			BlockPos.max(create(), create());
 		}
 	}

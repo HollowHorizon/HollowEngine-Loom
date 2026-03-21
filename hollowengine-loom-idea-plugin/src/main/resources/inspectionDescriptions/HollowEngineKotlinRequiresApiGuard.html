@@ -5,7 +5,7 @@ Reports Kotlin usages of APIs marked with <code>@RequiresApi</code> when they ar
 The inspection recognizes direct version guards such as:
 </p>
 <ul>
-    <li><code>if (Constants.is(1211)) { ... }</code></li>
+    <li><code>if (Constants.MINECRAFT == Constants.V1_21_1) { ... }</code></li>
     <li><code>if (Constants.MINECRAFT_VERSION == 1211) { ... }</code></li>
 </ul>
 <p>
