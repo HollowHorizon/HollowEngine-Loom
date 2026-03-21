@@ -120,6 +120,29 @@ class MultiversionCollectorTest extends Specification {
 		classInfo.versions == ["1.20.1", "1.21.1"] as Set
 	}
 
+	def "merges inner class visibility without invalid combined flags"() {
+		given:
+		def v1Jar = createJar([
+				"example/Outer.class": outerClassWithInner("example/Outer", "example/Outer\$Inner", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC),
+				"example/Outer\$Inner.class": simpleClass("example/Outer\$Inner", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
+		])
+		def v2Jar = createJar([
+				"example/Outer.class": outerClassWithInner("example/Outer", "example/Outer\$Inner", Opcodes.ACC_PROTECTED | Opcodes.ACC_STATIC),
+				"example/Outer\$Inner.class": simpleClass("example/Outer\$Inner", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
+		])
+		def collector = new MultiversionCollector()
+
+		when:
+		collector.addVersion("1.20.1", v1Jar)
+		collector.addVersion("1.21.1", v2Jar)
+		def classInfo = collector.getClasses().get("example/Outer\$Inner")
+
+		then:
+		classInfo != null
+		(classInfo.innerAccess & Opcodes.ACC_PUBLIC) != 0
+		(classInfo.innerAccess & Opcodes.ACC_PROTECTED) == 0
+	}
+
 	static Path createJar(Map<String, byte[]> entries) {
 		def jar = File.createTempFile("multiversion", ".jar").toPath()
 		jar.toFile().delete()
@@ -157,6 +180,21 @@ class MultiversionCollectorTest extends Specification {
 			visitor.visitEnd()
 		}
 
+		writer.visitEnd()
+		return writer.toByteArray()
+	}
+
+	static byte[] outerClassWithInner(String name, String innerName, int innerAccess) {
+		def writer = new ClassWriter(0)
+		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null)
+		writer.visitInnerClass(innerName, name, "Inner", innerAccess)
+		MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null)
+		constructor.visitCode()
+		constructor.visitVarInsn(Opcodes.ALOAD, 0)
+		constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+		constructor.visitInsn(Opcodes.RETURN)
+		constructor.visitMaxs(1, 1)
+		constructor.visitEnd()
 		writer.visitEnd()
 		return writer.toByteArray()
 	}

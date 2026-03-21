@@ -37,6 +37,7 @@ public final class MultiversionClassInfo {
 	private final String signature;
 	private final String superName;
 	private final List<String> interfaces;
+	private int innerAccess;
 	private final Set<String> versions = new LinkedHashSet<>();
 	private final Map<MethodSignature, MultiversionMethodInfo> methods = new LinkedHashMap<>();
 	private final Map<FieldSignature, MultiversionFieldInfo> fields = new LinkedHashMap<>();
@@ -47,6 +48,7 @@ public final class MultiversionClassInfo {
 		this.signature = signature;
 		this.superName = superName;
 		this.interfaces = interfaces == null ? List.of() : List.copyOf(interfaces);
+		this.innerAccess = access;
 	}
 
 	public String getName() {
@@ -67,6 +69,14 @@ public final class MultiversionClassInfo {
 
 	public List<String> getInterfaces() {
 		return interfaces;
+	}
+
+	public int getInnerAccess() {
+		return innerAccess;
+	}
+
+	public void setInnerAccess(int innerAccess) {
+		this.innerAccess = innerAccess;
 	}
 
 	public Set<String> getVersions() {

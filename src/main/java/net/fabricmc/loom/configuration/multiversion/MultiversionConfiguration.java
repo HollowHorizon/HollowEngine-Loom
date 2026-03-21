@@ -25,6 +25,7 @@
 package net.fabricmc.loom.configuration.multiversion;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,6 +46,8 @@ import org.gradle.jvm.tasks.Jar;
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.task.AbstractRunTask;
 import net.fabricmc.loom.task.RemapTaskConfiguration;
+import net.fabricmc.loom.util.Constants;
+import net.fabricmc.loom.util.ModPlatform;
 import net.fabricmc.loom.util.gradle.GradleUtils;
 import net.fabricmc.loom.util.gradle.SourceSetHelper;
 
@@ -67,7 +70,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 			task.getConstantsClass().set(project.provider(() -> MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get()));
 			task.getStubVersion().set(project.provider(() -> MultiversionSupport.computeStubVersion(task.getVersionMappings().get(), task.getBaseVersion().get())));
 			task.getStubJar().set(project.getLayout().file(project.provider(() -> project.getLayout().getBuildDirectory().file("loom-cache/multiversion/artifacts/%s/multiversion-stub.jar".formatted(task.getStubVersion().get())).get().getAsFile())));
-			task.getSourcesJar().set(project.getLayout().file(project.provider(() -> project.getLayout().getBuildDirectory().file("loom-cache/multiversion/artifacts/%s/multiversion-stub-sources.jar".formatted(task.getStubVersion().get())).get().getAsFile())));
+			task.getSourcesJar().set(project.getLayout().file(project.provider(() -> project.getLayout().getBuildDirectory().file("loom-cache/multiversion/source-archives/%s/multiversion-stub-sources.jar".formatted(task.getStubVersion().get())).get().getAsFile())));
 			task.getPublishedStubJar().set(project.getLayout().file(project.provider(() -> MultiversionSupport.createStubMavenHelper(project, task.getStubVersion().get()).getOutputFile(null).toFile())));
 			task.getPublishedSourcesJar().set(project.getLayout().file(project.provider(() -> MultiversionSupport.createStubMavenHelper(project, task.getStubVersion().get()).getOutputFile("sources").toFile())));
 		});
@@ -142,6 +145,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 			} else {
 				disableCommonRemapTasks();
 				project.getDependencies().add(JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, project.files(stubJar));
+				configureCommonLibraryClasspath();
 			}
 		});
 	}
@@ -286,6 +290,73 @@ public abstract class MultiversionConfiguration implements Runnable {
 		for (String taskName : List.of(RemapTaskConfiguration.REMAP_JAR_TASK_NAME, RemapTaskConfiguration.REMAP_SOURCES_JAR_TASK_NAME)) {
 			getTasks().matching(task -> taskName.equals(task.getName())).configureEach(task -> task.setEnabled(false));
 		}
+	}
+
+	private void configureCommonLibraryClasspath() {
+		final Map<String, String> versionMappings = MultiversionSupport.resolveVersionMappings(getProject());
+		final List<Configuration> runtimeLibraryConfigurations = new ArrayList<>();
+		final Map<String, Project> preferredTargets = new LinkedHashMap<>();
+
+		for (Project candidate : getProject().getRootProject().getAllprojects()) {
+			if (candidate == getProject() || !GradleUtils.isLoomProject(candidate)) {
+				continue;
+			}
+
+			final MultiversionTarget candidateTarget = (MultiversionTarget) LoomGradleExtension.get(candidate).getMultiversionTarget();
+
+			if (!candidateTarget.isConfigured()) {
+				continue;
+			}
+
+			final String targetVersion = candidateTarget.getMinecraftVersion().getOrNull();
+
+			if (targetVersion == null || !versionMappings.containsKey(targetVersion)) {
+				continue;
+			}
+
+			final Project current = preferredTargets.get(targetVersion);
+
+			if (current == null || preferredPlatformRank(candidate) < preferredPlatformRank(current)) {
+				preferredTargets.put(targetVersion, candidate);
+			}
+		}
+
+		for (Project candidate : preferredTargets.values()) {
+			for (String configurationName : List.of(
+					Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES,
+					Constants.Configurations.MINECRAFT_RUNTIME_LIBRARIES
+			)) {
+				final Configuration libraries = candidate.getConfigurations().findByName(configurationName);
+
+				if (libraries != null) {
+					runtimeLibraryConfigurations.add(libraries);
+				}
+			}
+		}
+
+		if (runtimeLibraryConfigurations.isEmpty()) {
+			return;
+		}
+
+		final var libraryFiles = getProject().files(runtimeLibraryConfigurations.toArray());
+		getProject().getDependencies().add(JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, libraryFiles);
+		final Configuration testCompileOnly = getProject().getConfigurations().findByName(JavaPlugin.TEST_COMPILE_ONLY_CONFIGURATION_NAME);
+
+		if (testCompileOnly != null) {
+			getProject().getDependencies().add(JavaPlugin.TEST_COMPILE_ONLY_CONFIGURATION_NAME, libraryFiles);
+		}
+	}
+
+	private static int preferredPlatformRank(Project project) {
+		final ModPlatform platform = LoomGradleExtension.get(project).getPlatform().get();
+
+		return switch (platform) {
+		case FABRIC -> 0;
+		case QUILT -> 1;
+		case NEOFORGE -> 2;
+		case FORGE -> 3;
+		default -> 10;
+		};
 	}
 
 	private void configureTargetLaunchAliases(MultiversionTarget target) {

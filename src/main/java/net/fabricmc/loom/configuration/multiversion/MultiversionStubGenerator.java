@@ -34,6 +34,7 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import org.objectweb.asm.AnnotationVisitor;
@@ -51,6 +52,19 @@ public final class MultiversionStubGenerator {
 
 	public GeneratedArtifacts generate(MultiversionCollector collector, Path classesJar, Path sourcesJar) throws IOException {
 		return generate(collector, classesJar, sourcesJar, "multiversion.Constants");
+	}
+
+	public MultiversionApiMetadata generateClassesOnly(MultiversionCollector collector, Path classesJar, String constantsClassName) throws IOException {
+		final Path classesDir = Files.createTempDirectory("loom-multiversion-classes");
+
+		try {
+			final MultiversionApiMetadata metadata = writeClasses(collector, classesDir, constantsClassName);
+			ZipUtils.pack(classesDir, classesJar);
+			ZipUtils.add(classesJar, MultiversionApiMetadata.PATH, LoomGradlePlugin.GSON.toJson(metadata));
+			return metadata;
+		} finally {
+			deleteDirectory(classesDir);
+		}
 	}
 
 	public GeneratedArtifacts generate(MultiversionCollector collector, Path classesJar, Path sourcesJar, String constantsClassName) throws IOException {
@@ -74,9 +88,13 @@ public final class MultiversionStubGenerator {
 		writeRequiresApi(outputDir);
 		writeConstantsClass(outputDir, constantsClassName, collector.getAllVersions());
 		final MultiversionApiMetadata.Builder metadata = MultiversionApiMetadata.builder(collector.getAllVersions());
+		final List<GeneratedClassMetadata> generatedClasses = collector.getClasses().values().parallelStream()
+				.map(classInfo -> writeClassWithMetadata(outputDir, collector.getClasses(), classInfo))
+				.sorted(Comparator.comparing(generated -> generated.classInfo().getName()))
+				.toList();
 
-		for (MultiversionClassInfo classInfo : collector.getClasses().values()) {
-			writeClass(outputDir, collector.getClasses(), classInfo);
+		for (GeneratedClassMetadata generated : generatedClasses) {
+			final MultiversionClassInfo classInfo = generated.classInfo();
 			metadata.addClass(classInfo.getName(), classInfo.getVersions());
 
 			for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
@@ -171,18 +189,19 @@ public final class MultiversionStubGenerator {
 
 	private void writeClass(Path outputDir, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) throws IOException {
 		final ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
-		writer.visit(Opcodes.V17, classInfo.getAccess(), classInfo.getName(), null, classInfo.getSuperName() == null ? "java/lang/Object" : classInfo.getSuperName(), classInfo.getInterfaces().toArray(String[]::new));
-		writeInnerClassEntries(writer, classes, classInfo.getName());
+		writer.visit(Opcodes.V17, classInfo.getAccess(), classInfo.getName(), classInfo.getSignature(), classInfo.getSuperName() == null ? "java/lang/Object" : classInfo.getSuperName(), classInfo.getInterfaces().toArray(String[]::new));
+		writeNestAttributes(writer, classes, classInfo.getName());
+		writeInnerClassEntries(writer, classes, classInfo);
 		writeRequiresApiAnnotation(writer.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), classInfo.getVersions());
 
 		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
-			final var visitor = writer.visitField(field.getAccess(), field.getName(), field.getDescriptor(), null, field.getValue());
+			final var visitor = writer.visitField(field.getAccess(), field.getName(), field.getDescriptor(), field.getSignature(), field.getValue());
 			writeRequiresApiAnnotation(visitor.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), field.getVersions());
 			visitor.visitEnd();
 		}
 
 		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
-			final MethodVisitor visitor = writer.visitMethod(method.getAccess(), method.getName(), method.getDescriptor(), null, method.getExceptions().toArray(String[]::new));
+			final MethodVisitor visitor = writer.visitMethod(method.getAccess(), method.getName(), method.getDescriptor(), method.getSignature(), method.getExceptions().toArray(String[]::new));
 			writeRequiresApiAnnotation(visitor.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), method.getVersions());
 
 			if ((method.getAccess() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) == 0) {
@@ -196,6 +215,15 @@ public final class MultiversionStubGenerator {
 		final Path output = outputDir.resolve(classInfo.getName() + ".class");
 		Files.createDirectories(output.getParent());
 		Files.write(output, writer.toByteArray());
+	}
+
+	private GeneratedClassMetadata writeClassWithMetadata(Path outputDir, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) {
+		try {
+			writeClass(outputDir, classes, classInfo);
+			return new GeneratedClassMetadata(classInfo);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to write multiversion stub class " + classInfo.getName(), e);
+		}
 	}
 
 	private void writeMethodBody(MethodVisitor visitor, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo, MultiversionClassInfo.MultiversionMethodInfo method) {
@@ -244,14 +272,18 @@ public final class MultiversionStubGenerator {
 	private void writeSources(MultiversionCollector collector, Path outputDir, String constantsClassName) throws IOException {
 		writeConstantsSource(outputDir, constantsClassName, collector.getAllVersions());
 
-		for (MultiversionClassInfo classInfo : collector.getClasses().values()) {
-			if (classInfo.getName().contains("$")) {
-				continue;
-			}
+		collector.getClasses().values().parallelStream()
+				.filter(classInfo -> !classInfo.getName().contains("$"))
+				.forEach(classInfo -> writeSource(outputDir, collector.getClasses(), classInfo));
+	}
 
+	private void writeSource(Path outputDir, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) {
+		try {
 			final Path output = outputDir.resolve(classInfo.getName() + ".java");
 			Files.createDirectories(output.getParent());
-			Files.writeString(output, toJavaSource(collector.getClasses(), classInfo), StandardCharsets.UTF_8);
+			Files.writeString(output, toJavaSource(classes, classInfo), StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to write multiversion stub source " + classInfo.getName(), e);
 		}
 	}
 
@@ -308,22 +340,24 @@ public final class MultiversionStubGenerator {
 
 	private void appendJavaClassSource(StringWriter writer, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo, String simpleName, int depth) {
 		final String indent = "\t".repeat(depth);
+		final int declarationAccess = depth > 0 ? classInfo.getInnerAccess() : classInfo.getAccess();
 		writer.append(indent).append("@RequiresApi({");
 		appendVersions(writer, classInfo.getVersions());
 		writer.append("})\n");
-		writer.append(indent).append("public ");
-
-		if (depth > 0) {
-			writer.append("static ");
-		}
-
-		writer.append("class ").append(simpleName).append(" {\n");
+		writer.append(indent);
+		appendClassModifiers(writer, declarationAccess);
+		appendClassKeyword(writer, declarationAccess);
+		writer.append(simpleName);
+		appendInheritance(writer, classInfo, declarationAccess);
+		writer.append(" {\n");
 
 		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
 			writer.append(indent).append("\t@RequiresApi({");
 			appendVersions(writer, field.getVersions());
 			writer.append("})\n");
-			writer.append(indent).append("\tpublic ").append(toJavaType(Type.getType(field.getDescriptor()))).append(" ").append(field.getName()).append(";\n");
+			writer.append(indent).append("\t");
+			appendMemberModifiers(writer, field.getAccess(), true);
+			writer.append(toJavaType(Type.getType(field.getDescriptor()))).append(" ").append(field.getName()).append(";\n");
 		}
 
 		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
@@ -332,9 +366,13 @@ public final class MultiversionStubGenerator {
 			writer.append("})\n");
 
 			if ("<init>".equals(method.getName())) {
-				writer.append(indent).append("\tpublic ").append(simpleName).append("(");
+				writer.append(indent).append("\t");
+				appendMemberModifiers(writer, method.getAccess(), false);
+				writer.append(simpleName).append("(");
 			} else {
-				writer.append(indent).append("\tpublic ").append(toJavaType(Type.getReturnType(method.getDescriptor()))).append(" ").append(method.getName()).append("(");
+				writer.append(indent).append("\t");
+				appendMemberModifiers(writer, method.getAccess(), false);
+				writer.append(toJavaType(Type.getReturnType(method.getDescriptor()))).append(" ").append(method.getName()).append("(");
 			}
 
 			final List<String> parameters = new ArrayList<>();
@@ -411,22 +449,56 @@ public final class MultiversionStubGenerator {
 		return result;
 	}
 
-	private static void writeInnerClassEntries(ClassWriter writer, Map<String, MultiversionClassInfo> classes, String internalName) {
-		final String ownerName = internalName;
+	private static void writeInnerClassEntries(ClassWriter writer, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) {
+		final String ownerName = classInfo.getName();
+		String currentInternalName = ownerName;
 		final Set<String> emitted = new LinkedHashSet<>();
-		int separator = internalName.lastIndexOf('$');
+		int separator = currentInternalName.lastIndexOf('$');
 
 		while (separator > 0) {
-			final String currentName = internalName;
+			final String currentName = currentInternalName;
 			final String outerName = currentName.substring(0, separator);
 			final String innerName = currentName.substring(separator + 1);
 			final MultiversionClassInfo currentClass = classes.get(currentName);
 			visitInnerClass(writer, emitted, currentName, outerName, innerName, innerClassAccess(currentClass));
-			internalName = outerName;
-			separator = internalName.lastIndexOf('$');
+			currentInternalName = outerName;
+			separator = currentInternalName.lastIndexOf('$');
 		}
 
 		visitDescendantInnerClasses(writer, emitted, classes, ownerName);
+		visitReferencedInnerClasses(writer, emitted, classes, classInfo);
+	}
+
+	private static void writeNestAttributes(ClassWriter writer, Map<String, MultiversionClassInfo> classes, String internalName) {
+		final String nestHost = nestHostName(internalName);
+
+		if (!internalName.equals(nestHost)) {
+			writer.visitNestHost(nestHost);
+			return;
+		}
+
+		for (String descendant : descendantInnerClassNames(classes, internalName)) {
+			writer.visitNestMember(descendant);
+		}
+	}
+
+	private static List<String> descendantInnerClassNames(Map<String, MultiversionClassInfo> classes, String ownerInternalName) {
+		final List<String> result = new ArrayList<>();
+		final String prefix = ownerInternalName + "$";
+
+		for (MultiversionClassInfo candidate : classes.values()) {
+			if (candidate.getName().startsWith(prefix)) {
+				result.add(candidate.getName());
+			}
+		}
+
+		result.sort(String::compareTo);
+		return result;
+	}
+
+	private static String nestHostName(String internalName) {
+		final int separator = internalName.indexOf('$');
+		return separator < 0 ? internalName : internalName.substring(0, separator);
 	}
 
 	private static void visitDescendantInnerClasses(ClassWriter writer, Set<String> emitted, Map<String, MultiversionClassInfo> classes, String ownerName) {
@@ -446,20 +518,153 @@ public final class MultiversionStubGenerator {
 		writer.visitInnerClass(name, outerName, innerName, access);
 	}
 
+	private static void visitReferencedInnerClasses(ClassWriter writer, Set<String> emitted, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) {
+		final Set<String> referenced = new LinkedHashSet<>();
+		addReferencedType(referenced, classInfo.getSuperName());
+		classInfo.getInterfaces().forEach(interfaceName -> addReferencedType(referenced, interfaceName));
+
+		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
+			addReferencedTypes(referenced, Type.getType(field.getDescriptor()));
+		}
+
+		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
+			addReferencedTypes(referenced, Type.getReturnType(method.getDescriptor()));
+
+			for (Type argumentType : Type.getArgumentTypes(method.getDescriptor())) {
+				addReferencedTypes(referenced, argumentType);
+			}
+
+			method.getExceptions().forEach(exceptionType -> addReferencedType(referenced, exceptionType));
+		}
+
+		for (String referencedInternalName : referenced) {
+			visitInnerClassChain(writer, emitted, classes, referencedInternalName);
+		}
+	}
+
+	private static void visitInnerClassChain(ClassWriter writer, Set<String> emitted, Map<String, MultiversionClassInfo> classes, String internalName) {
+		String currentInternalName = internalName;
+		int separator = currentInternalName.lastIndexOf('$');
+
+		while (separator > 0) {
+			final String currentName = currentInternalName;
+			final String outerName = currentName.substring(0, separator);
+			final String innerName = currentName.substring(separator + 1);
+			final MultiversionClassInfo currentClass = classes.get(currentName);
+			visitInnerClass(writer, emitted, currentName, outerName, innerName, innerClassAccess(currentClass));
+			currentInternalName = outerName;
+			separator = currentInternalName.lastIndexOf('$');
+		}
+	}
+
+	private static void addReferencedTypes(Set<String> referenced, Type type) {
+		if (type == null) {
+			return;
+		}
+
+		if (type.getSort() == Type.ARRAY) {
+			addReferencedTypes(referenced, type.getElementType());
+			return;
+		}
+
+		if (type.getSort() == Type.OBJECT) {
+			addReferencedType(referenced, type.getInternalName());
+		}
+	}
+
+	private static void addReferencedType(Set<String> referenced, String internalName) {
+		if (internalName == null || internalName.indexOf('$') < 0) {
+			return;
+		}
+
+		referenced.add(internalName);
+	}
+
 	private static int innerClassAccess(MultiversionClassInfo classInfo) {
 		if (classInfo == null) {
 			return Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC;
 		}
 
-		final int supportedFlags = Opcodes.ACC_PUBLIC | Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED | Opcodes.ACC_STATIC
-				| Opcodes.ACC_FINAL | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_ANNOTATION | Opcodes.ACC_ENUM;
-		return classInfo.getAccess() & supportedFlags;
+		return classInfo.getInnerAccess();
 	}
 
 	private static String simpleName(String internalName) {
 		final int packageSeparator = internalName.lastIndexOf('/');
 		final String rawSimpleName = packageSeparator >= 0 ? internalName.substring(packageSeparator + 1) : internalName;
 		return rawSimpleName.contains("$") ? rawSimpleName.substring(rawSimpleName.lastIndexOf('$') + 1) : rawSimpleName;
+	}
+
+	private static void appendClassModifiers(StringWriter writer, int access) {
+		if ((access & Opcodes.ACC_PUBLIC) != 0) {
+			writer.append("public ");
+		} else if ((access & Opcodes.ACC_PROTECTED) != 0) {
+			writer.append("protected ");
+		} else if ((access & Opcodes.ACC_PRIVATE) != 0) {
+			writer.append("private ");
+		}
+
+		if ((access & Opcodes.ACC_STATIC) != 0) {
+			writer.append("static ");
+		}
+
+		if ((access & Opcodes.ACC_ABSTRACT) != 0 && (access & Opcodes.ACC_INTERFACE) == 0) {
+			writer.append("abstract ");
+		}
+
+		if ((access & Opcodes.ACC_FINAL) != 0) {
+			writer.append("final ");
+		}
+	}
+
+	private static void appendMemberModifiers(StringWriter writer, int access, boolean field) {
+		if ((access & Opcodes.ACC_PUBLIC) != 0) {
+			writer.append("public ");
+		} else if ((access & Opcodes.ACC_PROTECTED) != 0) {
+			writer.append("protected ");
+		} else if ((access & Opcodes.ACC_PRIVATE) != 0) {
+			writer.append("private ");
+		}
+
+		if ((access & Opcodes.ACC_STATIC) != 0) {
+			writer.append("static ");
+		}
+
+		if ((access & Opcodes.ACC_ABSTRACT) != 0 && !field) {
+			writer.append("abstract ");
+		}
+
+		if ((access & Opcodes.ACC_FINAL) != 0) {
+			writer.append("final ");
+		}
+	}
+
+	private static void appendClassKeyword(StringWriter writer, int access) {
+		if ((access & Opcodes.ACC_ANNOTATION) != 0) {
+			writer.append("@interface ");
+		} else if ((access & Opcodes.ACC_INTERFACE) != 0) {
+			writer.append("interface ");
+		} else if ((access & Opcodes.ACC_ENUM) != 0) {
+			writer.append("enum ");
+		} else {
+			writer.append("class ");
+		}
+	}
+
+	private static void appendInheritance(StringWriter writer, MultiversionClassInfo classInfo, int access) {
+		final boolean isInterface = (access & Opcodes.ACC_INTERFACE) != 0;
+		final boolean isAnnotation = (access & Opcodes.ACC_ANNOTATION) != 0;
+		final boolean isEnum = (access & Opcodes.ACC_ENUM) != 0;
+
+		if (!isInterface && !isAnnotation && !isEnum && classInfo.getSuperName() != null && !"java/lang/Object".equals(classInfo.getSuperName())) {
+			writer.append(" extends ").append(toJavaType(Type.getObjectType(classInfo.getSuperName())));
+		}
+
+		if (!classInfo.getInterfaces().isEmpty()) {
+			writer.append(isInterface ? " extends " : " implements ");
+			writer.append(classInfo.getInterfaces().stream()
+					.map(interfaceName -> toJavaType(Type.getObjectType(interfaceName)))
+					.collect(java.util.stream.Collectors.joining(", ")));
+		}
 	}
 
 	private static void writeRequiresApiAnnotation(AnnotationVisitor visitor, Iterable<String> versions) {
@@ -486,6 +691,12 @@ public final class MultiversionStubGenerator {
 					throw new RuntimeException(e);
 				}
 			});
+		}
+	}
+
+	private record GeneratedClassMetadata(MultiversionClassInfo classInfo) {
+		private GeneratedClassMetadata {
+			Objects.requireNonNull(classInfo, "classInfo");
 		}
 	}
 

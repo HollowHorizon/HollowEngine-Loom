@@ -122,12 +122,13 @@ public abstract class GenerateMultiversionStubTask extends AbstractLoomTask {
 		final Path stubJar = getStubJar().get().getAsFile().toPath();
 		final Path sourcesJar = getSourcesJar().get().getAsFile().toPath();
 		Files.createDirectories(stubJar.getParent());
-		Files.createDirectories(sourcesJar.getParent());
-		new MultiversionStubGenerator().generate(collector, stubJar, sourcesJar, getConstantsClass().get());
+		new MultiversionStubGenerator().generateClassesOnly(collector, stubJar, getConstantsClass().get());
+		Files.deleteIfExists(sourcesJar);
+		Files.deleteIfExists(stubJar.getParent().resolve("multiversion-stub-sources.jar"));
 
 		final LocalMavenHelper helper = MultiversionSupport.createStubMavenHelper(getProject(), getStubVersion().get());
 		helper.copyToMaven(stubJar, null);
-		helper.copyToMaven(sourcesJar, "sources");
+		Files.deleteIfExists(helper.getOutputFile("sources"));
 	}
 
 	private Path resolveNamedJar(Path workingDirectory, String minecraftVersion, String mappingsNotation) throws Exception {
