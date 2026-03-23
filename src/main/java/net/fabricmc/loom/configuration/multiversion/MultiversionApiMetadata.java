@@ -33,9 +33,20 @@ public record MultiversionApiMetadata(
 		Set<String> availableVersions,
 		Map<String, Set<String>> classes,
 		Map<String, Set<String>> methods,
-		Map<String, Set<String>> fields) {
-	public static final int CURRENT_VERSION = 1;
+		Map<String, Set<String>> fields,
+		Map<String, String> syntheticMethods,
+		Map<String, String> syntheticFields) {
+	public static final int CURRENT_VERSION = 2;
 	public static final String PATH = "META-INF/loom/multiversion-api.json";
+
+	public MultiversionApiMetadata {
+		availableVersions = availableVersions == null ? Set.of() : Set.copyOf(availableVersions);
+		classes = classes == null ? Map.of() : Map.copyOf(classes);
+		methods = methods == null ? Map.of() : Map.copyOf(methods);
+		fields = fields == null ? Map.of() : Map.copyOf(fields);
+		syntheticMethods = syntheticMethods == null ? Map.of() : Map.copyOf(syntheticMethods);
+		syntheticFields = syntheticFields == null ? Map.of() : Map.copyOf(syntheticFields);
+	}
 
 	public static Builder builder(Set<String> availableVersions) {
 		return new Builder(availableVersions);
@@ -46,6 +57,8 @@ public record MultiversionApiMetadata(
 		private final Map<String, Set<String>> classes = new LinkedHashMap<>();
 		private final Map<String, Set<String>> methods = new LinkedHashMap<>();
 		private final Map<String, Set<String>> fields = new LinkedHashMap<>();
+		private final Map<String, String> syntheticMethods = new LinkedHashMap<>();
+		private final Map<String, String> syntheticFields = new LinkedHashMap<>();
 
 		private Builder(Set<String> availableVersions) {
 			this.availableVersions = availableVersions;
@@ -63,8 +76,16 @@ public record MultiversionApiMetadata(
 			fields.put(fieldKey(owner, name, descriptor), Set.copyOf(versions));
 		}
 
+		public void addSyntheticMethod(String owner, String name, String descriptor, String syntheticName) {
+			syntheticMethods.put(methodKey(owner, name, descriptor), syntheticName);
+		}
+
+		public void addSyntheticField(String owner, String name, String descriptor, String syntheticName) {
+			syntheticFields.put(fieldKey(owner, name, descriptor), syntheticName);
+		}
+
 		public MultiversionApiMetadata build() {
-			return new MultiversionApiMetadata(CURRENT_VERSION, Set.copyOf(availableVersions), classes, methods, fields);
+			return new MultiversionApiMetadata(CURRENT_VERSION, Set.copyOf(availableVersions), classes, methods, fields, syntheticMethods, syntheticFields);
 		}
 	}
 

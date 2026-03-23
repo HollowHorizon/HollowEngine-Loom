@@ -92,6 +92,7 @@ public final class MultiversionCollector {
 
 			existing.verifyCompatible(candidate);
 			existing.getVersions().addAll(candidate.getVersions());
+			mergeInterfaces(existing, candidate);
 			existing.setInnerAccess(mergeInnerClassAccess(existing.getInnerAccess(), candidate.getInnerAccess()));
 			mergeFields(existing, candidate);
 			mergeMethods(existing, candidate);
@@ -129,6 +130,19 @@ public final class MultiversionCollector {
 		}
 	}
 
+	private static void mergeInterfaces(MultiversionClassInfo target, MultiversionClassInfo source) {
+		for (var entry : source.getInterfaces().entrySet()) {
+			target.getInterfaces().compute(entry.getKey(), (key, existing) -> {
+				if (existing == null) {
+					return new LinkedHashSet<>(entry.getValue());
+				}
+
+				existing.addAll(entry.getValue());
+				return existing;
+			});
+		}
+	}
+
 	public Map<String, MultiversionClassInfo> getClasses() {
 		return classes;
 	}
@@ -152,13 +166,14 @@ public final class MultiversionCollector {
 
 		@Override
 		public void visit(int jversion, int access, String name, String signature, String superName, String[] interfaces) {
-			if (!isVisible(access) || isIgnoredClass(name)) {
+			if (!isVisible(access) || isIgnoredClass(name) || !isMinecraftClass(name)) {
 				return;
 			}
 
 			final MultiversionClassInfo candidate = new MultiversionClassInfo(name, sanitizeClassAccess(access), signature, superName, interfaces == null ? null : java.util.List.of(interfaces));
 			currentClass = candidate;
 			currentClass.getVersions().add(version);
+			currentClass.addInterfaces(interfaces == null ? null : java.util.List.of(interfaces), version);
 		}
 
 		@Override
@@ -210,6 +225,10 @@ public final class MultiversionCollector {
 			final int nestedSeparator = name.indexOf('$');
 			final String topLevelName = nestedSeparator >= 0 ? name.substring(0, nestedSeparator) : name;
 			return topLevelName.length() <= 3 && topLevelName.equals(topLevelName.toLowerCase(java.util.Locale.ROOT));
+		}
+
+		private static boolean isMinecraftClass(String name) {
+			return name != null && (name.startsWith("net/minecraft/") || name.startsWith("com/mojang/"));
 		}
 	}
 

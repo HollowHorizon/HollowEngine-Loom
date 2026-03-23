@@ -95,14 +95,25 @@ public final class MultiversionStubGenerator {
 
 		for (GeneratedClassMetadata generated : generatedClasses) {
 			final MultiversionClassInfo classInfo = generated.classInfo();
+			final MultiversionSyntheticMemberNames memberNames = MultiversionSyntheticMemberNames.of(classInfo);
 			metadata.addClass(classInfo.getName(), classInfo.getVersions());
 
 			for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
 				metadata.addField(classInfo.getName(), field.getName(), field.getDescriptor(), field.getVersions());
+				final String syntheticName = memberNames.fieldName(field);
+
+				if (!syntheticName.equals(field.getName())) {
+					metadata.addSyntheticField(classInfo.getName(), field.getName(), field.getDescriptor(), syntheticName);
+				}
 			}
 
 			for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
 				metadata.addMethod(classInfo.getName(), method.getName(), method.getDescriptor(), method.getVersions());
+				final String syntheticName = memberNames.methodName(method);
+
+				if (!syntheticName.equals(method.getName())) {
+					metadata.addSyntheticMethod(classInfo.getName(), method.getName(), method.getDescriptor(), syntheticName);
+				}
 			}
 		}
 
@@ -166,20 +177,24 @@ public final class MultiversionStubGenerator {
 	}
 
 	private void writeClass(Path outputDir, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) throws IOException {
+		final MultiversionSyntheticMemberNames memberNames = MultiversionSyntheticMemberNames.of(classInfo);
 		final ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
-		writer.visit(Opcodes.V17, classInfo.getAccess(), classInfo.getName(), classInfo.getSignature(), classInfo.getSuperName() == null ? "java/lang/Object" : classInfo.getSuperName(), classInfo.getInterfaces().toArray(String[]::new));
+		final List<String> interfaces = compatibleInterfaces(classInfo);
+		writer.visit(Opcodes.V17, classInfo.getAccess(), classInfo.getName(), classInfo.getSignature(), classInfo.getSuperName() == null ? "java/lang/Object" : classInfo.getSuperName(), interfaces.toArray(String[]::new));
 		writeNestAttributes(writer, classes, classInfo.getName());
 		writeInnerClassEntries(writer, classes, classInfo);
 		writeRequiresApiAnnotation(writer.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), classInfo.getVersions());
 
 		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
-			final var visitor = writer.visitField(field.getAccess(), field.getName(), field.getDescriptor(), field.getSignature(), field.getValue());
+			final String fieldName = memberNames.fieldName(field);
+			final var visitor = writer.visitField(field.getAccess(), fieldName, field.getDescriptor(), field.getSignature(), field.getValue());
 			writeRequiresApiAnnotation(visitor.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), field.getVersions());
 			visitor.visitEnd();
 		}
 
 		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
-			final MethodVisitor visitor = writer.visitMethod(method.getAccess(), method.getName(), method.getDescriptor(), method.getSignature(), method.getExceptions().toArray(String[]::new));
+			final String methodName = memberNames.methodName(method);
+			final MethodVisitor visitor = writer.visitMethod(method.getAccess(), methodName, method.getDescriptor(), method.getSignature(), method.getExceptions().toArray(String[]::new));
 			writeRequiresApiAnnotation(visitor.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), method.getVersions());
 
 			if ((method.getAccess() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) == 0) {
@@ -316,6 +331,7 @@ public final class MultiversionStubGenerator {
 	private void appendJavaClassSource(StringWriter writer, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo, String simpleName, int depth) {
 		final String indent = "\t".repeat(depth);
 		final int declarationAccess = depth > 0 ? classInfo.getInnerAccess() : classInfo.getAccess();
+		final MultiversionSyntheticMemberNames memberNames = MultiversionSyntheticMemberNames.of(classInfo);
 		writer.append(indent).append("@RequiresApi({");
 		appendVersions(writer, classInfo.getVersions());
 		writer.append("})\n");
@@ -332,7 +348,7 @@ public final class MultiversionStubGenerator {
 			writer.append("})\n");
 			writer.append(indent).append("\t");
 			appendMemberModifiers(writer, field.getAccess(), true);
-			writer.append(toJavaType(Type.getType(field.getDescriptor()))).append(" ").append(field.getName()).append(";\n");
+			writer.append(toJavaType(Type.getType(field.getDescriptor()))).append(" ").append(memberNames.fieldName(field)).append(";\n");
 		}
 
 		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
@@ -347,7 +363,7 @@ public final class MultiversionStubGenerator {
 			} else {
 				writer.append(indent).append("\t");
 				appendMemberModifiers(writer, method.getAccess(), false);
-				writer.append(toJavaType(Type.getReturnType(method.getDescriptor()))).append(" ").append(method.getName()).append("(");
+				writer.append(toJavaType(Type.getReturnType(method.getDescriptor()))).append(" ").append(memberNames.methodName(method)).append("(");
 			}
 
 			final List<String> parameters = new ArrayList<>();
@@ -496,7 +512,7 @@ public final class MultiversionStubGenerator {
 	private static void visitReferencedInnerClasses(ClassWriter writer, Set<String> emitted, Map<String, MultiversionClassInfo> classes, MultiversionClassInfo classInfo) {
 		final Set<String> referenced = new LinkedHashSet<>();
 		addReferencedType(referenced, classInfo.getSuperName());
-		classInfo.getInterfaces().forEach(interfaceName -> addReferencedType(referenced, interfaceName));
+		compatibleInterfaces(classInfo).forEach(interfaceName -> addReferencedType(referenced, interfaceName));
 
 		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
 			addReferencedTypes(referenced, Type.getType(field.getDescriptor()));
@@ -553,6 +569,30 @@ public final class MultiversionStubGenerator {
 		}
 
 		referenced.add(internalName);
+	}
+
+	private static List<String> compatibleInterfaces(MultiversionClassInfo classInfo) {
+		final Set<String> classVersions = classInfo.getVersions();
+
+		if (classVersions.isEmpty()) {
+			return classInfo.getInterfaces().keySet().stream()
+					.filter(MultiversionStubGenerator::isSupportedInterface)
+					.toList();
+		}
+
+		return classInfo.getInterfaces().entrySet().stream()
+				.filter(entry -> entry.getValue().containsAll(classVersions))
+				.map(Map.Entry::getKey)
+				.filter(MultiversionStubGenerator::isSupportedInterface)
+				.toList();
+	}
+
+	private static boolean isSupportedInterface(String internalName) {
+		return internalName != null && (internalName.startsWith("java/")
+				|| internalName.startsWith("javax/")
+				|| internalName.startsWith("kotlin/")
+				|| internalName.startsWith("net/minecraft/")
+				|| internalName.startsWith("com/mojang/"));
 	}
 
 	private static int innerClassAccess(MultiversionClassInfo classInfo) {
@@ -629,14 +669,15 @@ public final class MultiversionStubGenerator {
 		final boolean isInterface = (access & Opcodes.ACC_INTERFACE) != 0;
 		final boolean isAnnotation = (access & Opcodes.ACC_ANNOTATION) != 0;
 		final boolean isEnum = (access & Opcodes.ACC_ENUM) != 0;
+		final List<String> interfaces = compatibleInterfaces(classInfo);
 
 		if (!isInterface && !isAnnotation && !isEnum && classInfo.getSuperName() != null && !"java/lang/Object".equals(classInfo.getSuperName())) {
 			writer.append(" extends ").append(toJavaType(Type.getObjectType(classInfo.getSuperName())));
 		}
 
-		if (!classInfo.getInterfaces().isEmpty()) {
+		if (!interfaces.isEmpty()) {
 			writer.append(isInterface ? " extends " : " implements ");
-			writer.append(classInfo.getInterfaces().stream()
+			writer.append(interfaces.stream()
 					.map(interfaceName -> toJavaType(Type.getObjectType(interfaceName)))
 					.collect(java.util.stream.Collectors.joining(", ")));
 		}

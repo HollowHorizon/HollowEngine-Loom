@@ -10,12 +10,14 @@ import java.util.stream.Collectors;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiImportStatementBase;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiModifierListOwner;
 import com.intellij.psi.util.PsiTreeUtil;
 
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtClassOrObject;
+import org.jetbrains.kotlin.psi.KtImportDirective;
 import org.jetbrains.kotlin.psi.KtDeclaration;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
 
@@ -179,11 +181,19 @@ final class RequiresApiInspectionSupport {
 			return sourceVersions;
 		}
 
+		if (MultiversionMetadataResolver.isSyntheticAlias(owner, owner.getProject())) {
+			return Set.of();
+		}
+
 		return MultiversionMetadataResolver.resolveVersions(owner, owner.getProject());
 	}
 
 	static Set<Integer> resolveSymbolVersions(PsiElement element) {
 		if (element == null) {
+			return Set.of();
+		}
+
+		if (isImportContext(element)) {
 			return Set.of();
 		}
 
@@ -227,6 +237,11 @@ final class RequiresApiInspectionSupport {
 		}
 
 		return Set.of();
+	}
+
+	private static boolean isImportContext(PsiElement element) {
+		return PsiTreeUtil.getParentOfType(element, PsiImportStatementBase.class, false) != null
+				|| PsiTreeUtil.getParentOfType(element, KtImportDirective.class, false) != null;
 	}
 
 	static boolean hasSubscribeEvent(PsiModifierListOwner owner) {

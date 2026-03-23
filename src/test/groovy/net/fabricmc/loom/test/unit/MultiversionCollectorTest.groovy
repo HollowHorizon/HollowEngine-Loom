@@ -26,6 +26,7 @@ package net.fabricmc.loom.test.unit
 
 import java.nio.file.Path
 
+import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
@@ -39,22 +40,22 @@ class MultiversionCollectorTest extends Specification {
 	def "collects exact signatures separately across versions"() {
 		given:
 		def v1Jar = createJar([
-				"example/PoseStack.class": poseStackClass("example/PoseStack", [
+				"net/minecraft/example/PoseStack.class": poseStackClass("net/minecraft/example/PoseStack", [
 						[name: "<init>", desc: "()V", access: Opcodes.ACC_PUBLIC],
 						[name: "translate", desc: "(FFF)V", access: Opcodes.ACC_PUBLIC],
 						[name: "shared", desc: "()V", access: Opcodes.ACC_PROTECTED]
 				]),
-				"example/PoseStack\$Inner.class": poseStackClass("example/PoseStack\$Inner", [
+				"net/minecraft/example/PoseStack\$Inner.class": poseStackClass("net/minecraft/example/PoseStack\$Inner", [
 						[name: "<init>", desc: "()V", access: Opcodes.ACC_PUBLIC]
 				])
 		])
 		def v2Jar = createJar([
-				"example/PoseStack.class": poseStackClass("example/PoseStack", [
+				"net/minecraft/example/PoseStack.class": poseStackClass("net/minecraft/example/PoseStack", [
 						[name: "<init>", desc: "()V", access: Opcodes.ACC_PUBLIC],
 						[name: "translate", desc: "(DDD)V", access: Opcodes.ACC_PUBLIC],
 						[name: "shared", desc: "()V", access: Opcodes.ACC_PROTECTED]
 				]),
-				"example/PoseStack\$Inner.class": poseStackClass("example/PoseStack\$Inner", [
+				"net/minecraft/example/PoseStack\$Inner.class": poseStackClass("net/minecraft/example/PoseStack\$Inner", [
 						[name: "<init>", desc: "()V", access: Opcodes.ACC_PUBLIC]
 				])
 		])
@@ -66,52 +67,82 @@ class MultiversionCollectorTest extends Specification {
 		Map<String, MultiversionClassInfo> classes = collector.getClasses()
 
 		then:
-		classes.containsKey("example/PoseStack")
-		classes.containsKey("example/PoseStack\$Inner")
-		classes["example/PoseStack"].versions == ["1.20.1", "1.21.1"] as Set
-		classes["example/PoseStack"].methods.containsKey(new MultiversionClassInfo.MethodSignature("translate", "(FFF)V"))
-		classes["example/PoseStack"].methods.containsKey(new MultiversionClassInfo.MethodSignature("translate", "(DDD)V"))
-		classes["example/PoseStack"].methods.get(new MultiversionClassInfo.MethodSignature("translate", "(FFF)V")).versions == ["1.20.1"] as Set
-		classes["example/PoseStack"].methods.get(new MultiversionClassInfo.MethodSignature("translate", "(DDD)V")).versions == ["1.21.1"] as Set
-		classes["example/PoseStack"].methods.get(new MultiversionClassInfo.MethodSignature("shared", "()V")).versions == ["1.20.1", "1.21.1"] as Set
+		classes.containsKey("net/minecraft/example/PoseStack")
+		classes.containsKey("net/minecraft/example/PoseStack\$Inner")
+		classes["net/minecraft/example/PoseStack"].versions == ["1.20.1", "1.21.1"] as Set
+		classes["net/minecraft/example/PoseStack"].methods.containsKey(new MultiversionClassInfo.MethodSignature("translate", "(FFF)V"))
+		classes["net/minecraft/example/PoseStack"].methods.containsKey(new MultiversionClassInfo.MethodSignature("translate", "(DDD)V"))
+		classes["net/minecraft/example/PoseStack"].methods.get(new MultiversionClassInfo.MethodSignature("translate", "(FFF)V")).versions == ["1.20.1"] as Set
+		classes["net/minecraft/example/PoseStack"].methods.get(new MultiversionClassInfo.MethodSignature("translate", "(DDD)V")).versions == ["1.21.1"] as Set
+		classes["net/minecraft/example/PoseStack"].methods.get(new MultiversionClassInfo.MethodSignature("shared", "()V")).versions == ["1.20.1", "1.21.1"] as Set
 	}
 
 	def "keeps first compatible class header when supertypes drift"() {
 		given:
 		def v1Jar = createJar([
-				"example/Compatible.class": simpleClass("example/Compatible", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
+				"net/minecraft/example/Compatible.class": simpleClass("net/minecraft/example/Compatible", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
 		])
 		def v2Jar = createJar([
-				"example/Compatible.class": simpleClass("example/Compatible", Opcodes.ACC_PUBLIC, "java/lang/Number", ["java/io/Serializable"])
+				"net/minecraft/example/Compatible.class": simpleClass("net/minecraft/example/Compatible", Opcodes.ACC_PUBLIC, "java/lang/Number", ["java/io/Serializable"])
 		])
 		def collector = new MultiversionCollector()
 
 		when:
 		collector.addVersion("1.20.1", v1Jar)
 		collector.addVersion("1.21.1", v2Jar)
-		def classInfo = collector.getClasses().get("example/Compatible")
+		def classInfo = collector.getClasses().get("net/minecraft/example/Compatible")
+
+	then:
+	classInfo != null
+	classInfo.superName == "java/lang/Object"
+	classInfo.interfaces.keySet() == ["java/io/Serializable"] as Set
+	classInfo.interfaces.get("java/io/Serializable") == ["1.21.1"] as Set
+	classInfo.versions == ["1.20.1", "1.21.1"] as Set
+	}
+
+	def "drops target-only interfaces from shared stubs"() {
+		given:
+		def v1Jar = createJar([
+				"net/minecraft/example/Level.class": simpleClass("net/minecraft/example/Level", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
+		])
+		def v2Jar = createJar([
+				"net/minecraft/example/Level.class": simpleClass("net/minecraft/example/Level", Opcodes.ACC_PUBLIC, "java/lang/Object", [
+						"net/fabricmc/fabric/api/attachment/v1/AttachmentTarget"
+				])
+		])
+		def collector = new MultiversionCollector()
+		def stubJar = File.createTempFile("stub", ".jar").toPath()
+		stubJar.toFile().delete()
+		def sourcesJar = File.createTempFile("stub-sources", ".jar").toPath()
+		sourcesJar.toFile().delete()
+
+		when:
+		collector.addVersion("1.20.1", v1Jar)
+		collector.addVersion("1.21.1", v2Jar)
+		new net.fabricmc.loom.configuration.multiversion.MultiversionStubGenerator().generate(collector, stubJar, sourcesJar, "com.example.Constants")
+		def classNode = new org.objectweb.asm.tree.ClassNode()
+		new ClassReader(ZipUtils.unpack(stubJar, "net/minecraft/example/Level.class")).accept(classNode, 0)
+		def source = new String(ZipUtils.unpack(sourcesJar, "net/minecraft/example/Level.java"))
 
 		then:
-		classInfo != null
-		classInfo.superName == "java/lang/Object"
-		classInfo.interfaces == []
-		classInfo.versions == ["1.20.1", "1.21.1"] as Set
+		classNode.interfaces.isEmpty()
+		!source.contains("AttachmentTarget")
 	}
 
 	def "keeps first class kind when class kind changes across versions"() {
 		given:
 		def v1Jar = createJar([
-				"example/Incompatible.class": simpleClass("example/Incompatible", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
+				"net/minecraft/example/Incompatible.class": simpleClass("net/minecraft/example/Incompatible", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
 		])
 		def v2Jar = createJar([
-				"example/Incompatible.class": simpleClass("example/Incompatible", Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "java/lang/Object", null)
+				"net/minecraft/example/Incompatible.class": simpleClass("net/minecraft/example/Incompatible", Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "java/lang/Object", null)
 		])
 		def collector = new MultiversionCollector()
 
 		when:
 		collector.addVersion("1.20.1", v1Jar)
 		collector.addVersion("1.21.1", v2Jar)
-		def classInfo = collector.getClasses().get("example/Incompatible")
+		def classInfo = collector.getClasses().get("net/minecraft/example/Incompatible")
 
 		then:
 		noExceptionThrown()
@@ -123,19 +154,19 @@ class MultiversionCollectorTest extends Specification {
 	def "merges inner class visibility without invalid combined flags"() {
 		given:
 		def v1Jar = createJar([
-				"example/Outer.class": outerClassWithInner("example/Outer", "example/Outer\$Inner", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC),
-				"example/Outer\$Inner.class": simpleClass("example/Outer\$Inner", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
+				"net/minecraft/example/Outer.class": outerClassWithInner("net/minecraft/example/Outer", "net/minecraft/example/Outer\$Inner", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC),
+				"net/minecraft/example/Outer\$Inner.class": simpleClass("net/minecraft/example/Outer\$Inner", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
 		])
 		def v2Jar = createJar([
-				"example/Outer.class": outerClassWithInner("example/Outer", "example/Outer\$Inner", Opcodes.ACC_PROTECTED | Opcodes.ACC_STATIC),
-				"example/Outer\$Inner.class": simpleClass("example/Outer\$Inner", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
+				"net/minecraft/example/Outer.class": outerClassWithInner("net/minecraft/example/Outer", "net/minecraft/example/Outer\$Inner", Opcodes.ACC_PROTECTED | Opcodes.ACC_STATIC),
+				"net/minecraft/example/Outer\$Inner.class": simpleClass("net/minecraft/example/Outer\$Inner", Opcodes.ACC_PUBLIC, "java/lang/Object", null)
 		])
 		def collector = new MultiversionCollector()
 
 		when:
 		collector.addVersion("1.20.1", v1Jar)
 		collector.addVersion("1.21.1", v2Jar)
-		def classInfo = collector.getClasses().get("example/Outer\$Inner")
+		def classInfo = collector.getClasses().get("net/minecraft/example/Outer\$Inner")
 
 		then:
 		classInfo != null

@@ -177,5 +177,19 @@ public final class MultiversionRequiresApiMetadataCollector {
 			final int colon = key.indexOf(':', hash);
 			builder.addField(key.substring(0, hash), key.substring(hash + 1, colon), key.substring(colon + 1), entry.getValue());
 		}
+
+		for (Map.Entry<String, String> entry : metadata.syntheticMethods().entrySet()) {
+			final String key = entry.getKey();
+			final int hash = key.indexOf('#');
+			final int paren = key.indexOf('(', hash);
+			builder.addSyntheticMethod(key.substring(0, hash), key.substring(hash + 1, paren), key.substring(paren), entry.getValue());
+		}
+
+		for (Map.Entry<String, String> entry : metadata.syntheticFields().entrySet()) {
+			final String key = entry.getKey();
+			final int hash = key.indexOf('#');
+			final int colon = key.indexOf(':', hash);
+			builder.addSyntheticField(key.substring(0, hash), key.substring(hash + 1, colon), key.substring(colon + 1), entry.getValue());
+		}
 	}
 }

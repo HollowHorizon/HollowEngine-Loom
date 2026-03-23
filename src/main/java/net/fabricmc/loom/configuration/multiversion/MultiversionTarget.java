@@ -24,18 +24,33 @@
 
 package net.fabricmc.loom.configuration.multiversion;
 
+import java.util.Set;
+
 import javax.inject.Inject;
 
+import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.Project;
 import org.gradle.api.provider.Property;
 
+import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.api.MultiversionTargetAPI;
 
 public abstract class MultiversionTarget implements MultiversionTargetAPI {
 	@Inject
 	public MultiversionTarget(Project project) {
 		getConstantsClass().finalizeValueOnRead();
-		getMinecraftVersion().finalizeValueOnRead();
+
+		project.afterEvaluate(ignored -> {
+			if (getMinecraftVersion().isPresent()) {
+				return;
+			}
+
+			final String minecraftVersion = inferMinecraftVersion(project);
+
+			if (minecraftVersion != null) {
+				getMinecraftVersion().set(minecraftVersion);
+			}
+		});
 	}
 
 	@Override
@@ -47,5 +62,23 @@ public abstract class MultiversionTarget implements MultiversionTargetAPI {
 
 	public boolean isConfigured() {
 		return getMinecraftVersion().isPresent();
+	}
+
+	static String inferMinecraftVersion(Project project) {
+		final var minecraft = project.getConfigurations().findByName(Constants.Configurations.MINECRAFT);
+
+		if (minecraft == null) {
+			return null;
+		}
+
+		final Set<String> versions = minecraft.getDependencies().stream()
+				.filter(Dependency.class::isInstance)
+				.map(Dependency.class::cast)
+				.filter(dependency -> "com.mojang".equals(dependency.getGroup()) && "minecraft".equals(dependency.getName()))
+				.map(Dependency::getVersion)
+				.filter(version -> version != null && !version.isBlank())
+				.collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+
+		return versions.size() == 1 ? versions.iterator().next() : null;
 	}
 }

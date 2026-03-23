@@ -58,8 +58,8 @@ class MultiversionProjectTest extends Specification implements GradleProjectTest
 		new File(gradle.projectDir, "fabric1201/build/classes/java/main/com/example/FabricTarget.class").exists()
 		new File(gradle.projectDir, "fabric1211/build/classes/java/main/com/example/FabricTarget1211.class").exists()
 		new File(gradle.projectDir, "common/build/loom-cache/validateMultiversionApiUsage.ok").exists()
-		!new File(gradle.projectDir, "fabric1201/build/loom-cache/validateMultiversionApiUsage.ok").exists()
-		!new File(gradle.projectDir, "fabric1211/build/loom-cache/validateMultiversionApiUsage.ok").exists()
+		new File(gradle.projectDir, "fabric1201/build/loom-cache/validateMultiversionApiUsage.ok").exists()
+		new File(gradle.projectDir, "fabric1211/build/loom-cache/validateMultiversionApiUsage.ok").exists()
 
 		def constants1201 = new File(gradle.projectDir, "fabric1201/build/generated/sources/loomMultiversion/constants/com/example/Constants.java")
 		def constants1211 = new File(gradle.projectDir, "fabric1211/build/generated/sources/loomMultiversion/constants/com/example/Constants.java")
@@ -71,13 +71,10 @@ class MultiversionProjectTest extends Specification implements GradleProjectTest
 		!constants1211.text.contains("public static boolean isAtLeast")
 
 		def stubJar = findArtifact(gradle.projectDir) { it.name.startsWith("multiversion-stub-") && it.name.endsWith(".jar") && !it.name.endsWith("-sources.jar") }
-		def sourcesJar = findArtifact(gradle.projectDir) { it.name.startsWith("multiversion-stub-") && it.name.endsWith("-sources.jar") }
 
 		ZipUtils.unpackNullable(stubJar.toPath(), "multiversion/api/RequiresApi.class") != null
 		ZipUtils.unpackNullable(stubJar.toPath(), "META-INF/loom/multiversion-api.json") != null
 		ZipUtils.unpackNullable(stubJar.toPath(), "com/example/Constants.class") != null
-		ZipUtils.unpackNullable(sourcesJar.toPath(), "com/example/Constants.java") != null
-		ZipUtils.unpackNullable(sourcesJar.toPath(), "com/example/FabricTarget.java") == null
 	}
 
 	private static File findArtifact(File root, Closure<Boolean> predicate) {

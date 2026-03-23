@@ -95,6 +95,11 @@ public abstract class MultiversionConfiguration implements Runnable {
 			task.getMarkerFile().set(project.getLayout().getBuildDirectory().file("loom-cache/validateMultiversionApiUsage.ok"));
 		});
 
+		final var restoreApiNames = getTasks().register("restoreMultiversionApiNames", RestoreMultiversionApiNamesTask.class, task -> {
+			task.getClassesDirectories().from(mainSourceSet.getOutput().getClassesDirs());
+			task.getStubJar().set(generateStub.flatMap(GenerateMultiversionStubTask::getStubJar));
+		});
+
 		final var optimizeConstants = getTasks().register("optimizeMultiversionConstants", OptimizeMultiversionConstantsTask.class, task -> {
 			task.getTargetVersion().set(project.provider(() -> ((MultiversionTarget) extension.getMultiversionTarget()).getMinecraftVersion().getOrElse("")));
 			task.getConstantsClass().set(project.provider(() -> MultiversionSupport.getConfiguredExtension(project).getConstantsClass().get()));
@@ -135,7 +140,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 				validateApiUsage.configure(task -> task.getStubJar().set(generateStub.flatMap(GenerateMultiversionStubTask::getStubJar)));
 			}
 
-			configureCompileTasks(mainSourceSet, generateStub, generateConstants, validateApiUsage, optimizeConstants);
+			configureCompileTasks(mainSourceSet, generateStub, generateConstants, restoreApiNames, validateApiUsage, optimizeConstants);
 			configureIdeaSync(generateStub, generateConstants, generateIdeaMetadata);
 
 			if (target.isConfigured()) {
@@ -155,7 +160,7 @@ public abstract class MultiversionConfiguration implements Runnable {
 		main.getJava().srcDir(generateConstants.flatMap(GenerateMultiversionConstantsTask::getOutputDirectory));
 	}
 
-	private void configureCompileTasks(SourceSet mainSourceSet, org.gradle.api.tasks.TaskProvider<GenerateMultiversionStubTask> generateStub, org.gradle.api.tasks.TaskProvider<GenerateMultiversionConstantsTask> generateConstants, org.gradle.api.tasks.TaskProvider<ValidateMultiversionApiUsageTask> validateApiUsage, org.gradle.api.tasks.TaskProvider<OptimizeMultiversionConstantsTask> optimizeConstants) {
+	private void configureCompileTasks(SourceSet mainSourceSet, org.gradle.api.tasks.TaskProvider<GenerateMultiversionStubTask> generateStub, org.gradle.api.tasks.TaskProvider<GenerateMultiversionConstantsTask> generateConstants, org.gradle.api.tasks.TaskProvider<RestoreMultiversionApiNamesTask> restoreApiNames, org.gradle.api.tasks.TaskProvider<ValidateMultiversionApiUsageTask> validateApiUsage, org.gradle.api.tasks.TaskProvider<OptimizeMultiversionConstantsTask> optimizeConstants) {
 		final MultiversionTarget target = (MultiversionTarget) LoomGradleExtension.get(getProject()).getMultiversionTarget();
 
 		getTasks().configureEach(task -> {
@@ -175,8 +180,14 @@ public abstract class MultiversionConfiguration implements Runnable {
 			final String name = candidate.getName();
 			return mainJavaCompileTaskName.equals(name) || "compileKotlin".equals(name);
 		});
-		optimizeConstants.configure(task -> task.dependsOn(compileTasks));
-		validateApiUsage.configure(task -> task.dependsOn(target.isConfigured() ? optimizeConstants : compileTasks));
+		if (target.isConfigured()) {
+			optimizeConstants.configure(task -> task.dependsOn(compileTasks));
+			validateApiUsage.configure(task -> task.dependsOn(optimizeConstants));
+		} else {
+			restoreApiNames.configure(task -> task.dependsOn(compileTasks));
+			optimizeConstants.configure(task -> task.dependsOn(restoreApiNames));
+			validateApiUsage.configure(task -> task.dependsOn(restoreApiNames));
+		}
 		getTasks().named(JavaPlugin.CLASSES_TASK_NAME).configure(task -> task.dependsOn(validateApiUsage));
 	}
 
@@ -322,15 +333,10 @@ public abstract class MultiversionConfiguration implements Runnable {
 		}
 
 		for (Project candidate : preferredTargets.values()) {
-			for (String configurationName : List.of(
-					Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES,
-					Constants.Configurations.MINECRAFT_RUNTIME_LIBRARIES
-			)) {
-				final Configuration libraries = candidate.getConfigurations().findByName(configurationName);
+			final Configuration compileLibraries = candidate.getConfigurations().findByName(Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES);
 
-				if (libraries != null) {
-					runtimeLibraryConfigurations.add(libraries);
-				}
+			if (compileLibraries != null) {
+				runtimeLibraryConfigurations.add(compileLibraries);
 			}
 		}
 

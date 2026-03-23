@@ -65,7 +65,7 @@ final class MultiversionMetadataResolver {
 					return Set.of();
 				}
 
-				return metadata.methods.getOrDefault(methodKey(ownerClass, method), Set.of());
+				return lookupVersions(metadata.methods, metadata.syntheticMethodLookup, methodKey(ownerClass, method));
 			});
 		}
 
@@ -77,7 +77,7 @@ final class MultiversionMetadataResolver {
 					return Set.of();
 				}
 
-				return metadata.fields.getOrDefault(fieldKey(ownerClass, field), Set.of());
+				return lookupVersions(metadata.fields, metadata.syntheticFieldLookup, fieldKey(ownerClass, field));
 			});
 		}
 
@@ -112,6 +112,10 @@ final class MultiversionMetadataResolver {
 		merged.classes = new LinkedHashMap<>();
 		merged.methods = new LinkedHashMap<>();
 		merged.fields = new LinkedHashMap<>();
+		merged.syntheticMethods = new LinkedHashMap<>();
+		merged.syntheticFields = new LinkedHashMap<>();
+		merged.syntheticMethodLookup = new LinkedHashMap<>();
+		merged.syntheticFieldLookup = new LinkedHashMap<>();
 
 		for (VirtualFile root : ProjectRootManager.getInstance(project).orderEntries().classes().getRoots()) {
 			final VirtualFile metadataFile = root.findFileByRelativePath(METADATA_PATH);
@@ -142,6 +146,16 @@ final class MultiversionMetadataResolver {
 				if (metadata.fields != null) {
 					merged.fields.putAll(metadata.fields);
 				}
+
+				if (metadata.syntheticMethods != null) {
+					merged.syntheticMethods.putAll(metadata.syntheticMethods);
+					metadata.syntheticMethods.forEach((originalKey, syntheticName) -> addSyntheticLookup(merged.syntheticMethodLookup, originalKey, syntheticName, true));
+				}
+
+				if (metadata.syntheticFields != null) {
+					merged.syntheticFields.putAll(metadata.syntheticFields);
+					metadata.syntheticFields.forEach((originalKey, syntheticName) -> addSyntheticLookup(merged.syntheticFieldLookup, originalKey, syntheticName, false));
+				}
 			} catch (IOException ignored) {
 			}
 		}
@@ -154,8 +168,71 @@ final class MultiversionMetadataResolver {
 		return internalName(ownerClass) + "#" + method.getName() + descriptor(method);
 	}
 
+	private static Set<String> lookupVersions(Map<String, Set<String>> direct, Map<String, String> syntheticLookup, String key) {
+		final Set<String> versions = direct.get(key);
+
+		if (versions != null) {
+			return versions;
+		}
+
+		if (syntheticLookup == null || syntheticLookup.isEmpty()) {
+			return Set.of();
+		}
+
+		final String originalKey = syntheticLookup.get(key);
+
+		if (originalKey == null) {
+			return Set.of();
+		}
+
+		return direct.getOrDefault(originalKey, Set.of());
+	}
+
+	static boolean isSyntheticAlias(PsiModifierListOwner owner, Project project) {
+		final MultiversionApiMetadataModel metadata = resolveMergedMetadata(project);
+
+		if (owner instanceof PsiMethod method) {
+			final PsiClass ownerClass = method.getContainingClass();
+
+			if (ownerClass == null) {
+				return false;
+			}
+
+			return isSyntheticAlias(metadata.syntheticMethodLookup, methodKey(ownerClass, method));
+		}
+
+		if (owner instanceof PsiField field) {
+			final PsiClass ownerClass = field.getContainingClass();
+
+			if (ownerClass == null) {
+				return false;
+			}
+
+			return isSyntheticAlias(metadata.syntheticFieldLookup, fieldKey(ownerClass, field));
+		}
+
+		return false;
+	}
+
 	private static String fieldKey(PsiClass ownerClass, PsiField field) {
 		return internalName(ownerClass) + "#" + field.getName() + ":" + descriptor(field.getType());
+	}
+
+	private static void addSyntheticLookup(Map<String, String> lookup, String originalKey, String syntheticName, boolean method) {
+		final int hash = originalKey.indexOf('#');
+
+		if (hash < 0) {
+			return;
+		}
+
+		final String owner = originalKey.substring(0, hash);
+		final int separator = method ? originalKey.indexOf('(', hash) : originalKey.indexOf(':', hash);
+
+		if (separator < 0) {
+			return;
+		}
+
+		lookup.put(owner + "#" + syntheticName + originalKey.substring(separator), originalKey);
 	}
 
 	private static String internalName(PsiClass psiClass) {
@@ -167,6 +244,10 @@ final class MultiversionMetadataResolver {
 
 		final String qualifiedName = psiClass.getQualifiedName();
 		return qualifiedName == null ? psiClass.getName() : qualifiedName.replace('.', '/');
+	}
+
+	static boolean isSyntheticAlias(Map<String, String> syntheticLookup, String key) {
+		return syntheticLookup != null && syntheticLookup.containsKey(key);
 	}
 
 	private static String descriptor(PsiMethod method) {

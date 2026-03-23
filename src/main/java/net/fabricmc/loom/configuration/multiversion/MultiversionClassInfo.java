@@ -36,7 +36,7 @@ public final class MultiversionClassInfo {
 	private final int access;
 	private final String signature;
 	private final String superName;
-	private final List<String> interfaces;
+	private final Map<String, Set<String>> interfaces = new LinkedHashMap<>();
 	private int innerAccess;
 	private final Set<String> versions = new LinkedHashSet<>();
 	private final Map<MethodSignature, MultiversionMethodInfo> methods = new LinkedHashMap<>();
@@ -47,8 +47,13 @@ public final class MultiversionClassInfo {
 		this.access = access;
 		this.signature = signature;
 		this.superName = superName;
-		this.interfaces = interfaces == null ? List.of() : List.copyOf(interfaces);
 		this.innerAccess = access;
+
+		if (interfaces != null) {
+			for (String interfaceName : interfaces) {
+				this.interfaces.put(interfaceName, new LinkedHashSet<>());
+			}
+		}
 	}
 
 	public String getName() {
@@ -67,7 +72,7 @@ public final class MultiversionClassInfo {
 		return superName;
 	}
 
-	public List<String> getInterfaces() {
+	public Map<String, Set<String>> getInterfaces() {
 		return interfaces;
 	}
 
@@ -180,6 +185,16 @@ public final class MultiversionClassInfo {
 	public void verifyCompatible(MultiversionClassInfo other) {
 		// Keep the base-version header when class kind drifts across versions.
 		// This keeps superset stub generation usable for wider version jumps such as 1.20.1 -> 1.21.1.
+	}
+
+	public void addInterfaces(List<String> interfaces, String version) {
+		if (interfaces == null) {
+			return;
+		}
+
+		for (String interfaceName : interfaces) {
+			this.interfaces.computeIfAbsent(interfaceName, unused -> new LinkedHashSet<>()).add(version);
+		}
 	}
 
 	public List<MultiversionMethodInfo> constructors() {

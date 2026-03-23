@@ -9,4 +9,8 @@ final class MultiversionApiMetadataModel {
 	Map<String, Set<String>> classes;
 	Map<String, Set<String>> methods;
 	Map<String, Set<String>> fields;
+	Map<String, String> syntheticMethods;
+	Map<String, String> syntheticFields;
+	Map<String, String> syntheticMethodLookup;
+	Map<String, String> syntheticFieldLookup;
 }
