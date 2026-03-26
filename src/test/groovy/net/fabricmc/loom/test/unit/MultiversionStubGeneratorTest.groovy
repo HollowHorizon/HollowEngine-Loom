@@ -24,8 +24,13 @@
 
 package net.fabricmc.loom.test.unit
 
+import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.FieldVisitor
+import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.tree.ClassNode
 import spock.lang.Specification
 
 import net.fabricmc.loom.LoomGradlePlugin
@@ -128,6 +133,67 @@ class MultiversionStubGeneratorTest extends Specification {
 		then:
 		classNode.interfaces == ["net/minecraft/example/MultiBufferSource"]
 		source.contains("implements net.minecraft.example.MultiBufferSource")
+	}
+
+	def "keeps private and protected members in stubs"() {
+		given:
+		def collector = new MultiversionCollector()
+		def jar = MultiversionCollectorTest.createJar([
+				"net/minecraft/network/Connection.class": MultiversionCollectorTest.simpleClass("net/minecraft/network/Connection", Opcodes.ACC_PUBLIC, "java/lang/Object", null, [
+						[name: "<init>", desc: "()V", access: Opcodes.ACC_PUBLIC],
+						[name: "send", desc: "(I)V", access: Opcodes.ACC_PRIVATE],
+						[name: "relay", desc: "(I)V", access: Opcodes.ACC_PROTECTED]
+				])
+		])
+		def stubJar = File.createTempFile("stub", ".jar").toPath()
+		stubJar.toFile().delete()
+		def sourcesJar = File.createTempFile("stub-sources", ".jar").toPath()
+		sourcesJar.toFile().delete()
+
+		when:
+		collector.addVersion("1.20.1", jar)
+		new MultiversionStubGenerator().generate(collector, stubJar, sourcesJar, "com.example.Constants")
+		def classNode = new ClassNode()
+		new ClassReader(ZipUtils.unpack(stubJar, "net/minecraft/network/Connection.class")).accept(classNode, 0)
+		def source = new String(ZipUtils.unpack(sourcesJar, "net/minecraft/network/Connection.java"))
+
+		then:
+		classNode.methods*.name.containsAll(["send", "relay"])
+		source.contains("private void send(int arg0)")
+		source.contains("protected void relay(int arg0)")
+	}
+
+	def "preserves notnull and nullable annotations"() {
+		given:
+		def collector = new MultiversionCollector()
+		def jar = MultiversionCollectorTest.createJar([
+				"net/minecraft/example/NullableExample.class": annotatedClass(
+						"net/minecraft/example/NullableExample",
+						[
+								[name: "value", desc: "Ljava/lang/String;", access: Opcodes.ACC_PRIVATE, annotations: ["Lorg/jetbrains/annotations/Nullable;"]]
+						],
+						[
+								[name: "name", desc: "()Ljava/lang/String;", access: Opcodes.ACC_PUBLIC, annotations: ["Lorg/jetbrains/annotations/NotNull;"]]
+						]
+				)
+		])
+		def stubJar = File.createTempFile("stub", ".jar").toPath()
+		stubJar.toFile().delete()
+		def sourcesJar = File.createTempFile("stub-sources", ".jar").toPath()
+		sourcesJar.toFile().delete()
+
+		when:
+		collector.addVersion("1.20.1", jar)
+		new MultiversionStubGenerator().generate(collector, stubJar, sourcesJar, "com.example.Constants")
+		def classNode = new ClassNode()
+		new ClassReader(ZipUtils.unpack(stubJar, "net/minecraft/example/NullableExample.class")).accept(classNode, 0)
+		def source = new String(ZipUtils.unpack(sourcesJar, "net/minecraft/example/NullableExample.java"))
+
+		then:
+		source.contains("@org.jetbrains.annotations.Nullable")
+		source.contains("@org.jetbrains.annotations.NotNull")
+		classNode.fields.any { it.name == "value" && it.visibleAnnotations?.any { annotation -> annotation.desc == "Lorg/jetbrains/annotations/Nullable;" } }
+		classNode.methods.any { it.name == "name" && it.visibleAnnotations?.any { annotation -> annotation.desc == "Lorg/jetbrains/annotations/NotNull;" } }
 	}
 
 	def "drops target-only interfaces from generated stubs"() {
@@ -283,5 +349,47 @@ class MultiversionStubGeneratorTest extends Specification {
 
 		then:
 		innerClasses.contains("net/minecraft/example/Owner\$Inner")
+	}
+
+	private static byte[] annotatedClass(String name, List<Map<String, Object>> fields, List<Map<String, Object>> methods) {
+		def writer = new ClassWriter(0)
+		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null)
+
+		fields.each { field ->
+			FieldVisitor visitor = writer.visitField(field.access as int, field.name as String, field.desc as String, null, null)
+
+			(field.annotations as List<String>).each { annotation ->
+				visitor.visitAnnotation(annotation, true).visitEnd()
+			}
+
+			visitor.visitEnd()
+		}
+
+		methods.each { method ->
+			MethodVisitor visitor = writer.visitMethod(method.access as int, method.name as String, method.desc as String, null, null)
+
+			(method.annotations as List<String>).each { annotation ->
+				visitor.visitAnnotation(annotation, true).visitEnd()
+			}
+
+			if ((method.access as int & Opcodes.ACC_ABSTRACT) == 0) {
+				visitor.visitCode()
+
+				if (method.name == "<init>") {
+					visitor.visitVarInsn(Opcodes.ALOAD, 0)
+					visitor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+					visitor.visitInsn(Opcodes.RETURN)
+					visitor.visitMaxs(1, 1)
+				} else {
+					visitor.visitInsn(Opcodes.ARETURN)
+					visitor.visitMaxs(1, 1)
+				}
+			}
+
+			visitor.visitEnd()
+		}
+
+		writer.visitEnd()
+		return writer.toByteArray()
 	}
 }

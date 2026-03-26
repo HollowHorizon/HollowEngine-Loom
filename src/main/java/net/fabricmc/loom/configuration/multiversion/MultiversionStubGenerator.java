@@ -40,6 +40,7 @@ import java.util.Set;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
+import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -181,6 +182,7 @@ public final class MultiversionStubGenerator {
 		final ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
 		final List<String> interfaces = compatibleInterfaces(classInfo);
 		writer.visit(Opcodes.V17, classInfo.getAccess(), classInfo.getName(), classInfo.getSignature(), classInfo.getSuperName() == null ? "java/lang/Object" : classInfo.getSuperName(), interfaces.toArray(String[]::new));
+		writeClassAnnotations(writer, classInfo.getAnnotations());
 		writeNestAttributes(writer, classes, classInfo.getName());
 		writeInnerClassEntries(writer, classes, classInfo);
 		writeRequiresApiAnnotation(writer.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), classInfo.getVersions());
@@ -188,6 +190,7 @@ public final class MultiversionStubGenerator {
 		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
 			final String fieldName = memberNames.fieldName(field);
 			final var visitor = writer.visitField(field.getAccess(), fieldName, field.getDescriptor(), field.getSignature(), field.getValue());
+			writeFieldAnnotations(visitor, field.getAnnotations());
 			writeRequiresApiAnnotation(visitor.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), field.getVersions());
 			visitor.visitEnd();
 		}
@@ -195,6 +198,7 @@ public final class MultiversionStubGenerator {
 		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
 			final String methodName = memberNames.methodName(method);
 			final MethodVisitor visitor = writer.visitMethod(method.getAccess(), methodName, method.getDescriptor(), method.getSignature(), method.getExceptions().toArray(String[]::new));
+			writeMethodAnnotations(visitor, method.getAnnotations());
 			writeRequiresApiAnnotation(visitor.visitAnnotation("L" + REQUIRES_API_INTERNAL_NAME + ";", true), method.getVersions());
 
 			if ((method.getAccess() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) == 0) {
@@ -343,6 +347,7 @@ public final class MultiversionStubGenerator {
 		writer.append(" {\n");
 
 		for (MultiversionClassInfo.MultiversionFieldInfo field : classInfo.getFields().values()) {
+			appendAnnotations(writer, indent + "\t", field.getAnnotations());
 			writer.append(indent).append("\t@RequiresApi({");
 			appendVersions(writer, field.getVersions());
 			writer.append("})\n");
@@ -352,6 +357,7 @@ public final class MultiversionStubGenerator {
 		}
 
 		for (MultiversionClassInfo.MultiversionMethodInfo method : classInfo.getMethods().values()) {
+			appendAnnotations(writer, indent + "\t", method.getAnnotations());
 			writer.append("\n").append(indent).append("\t@RequiresApi({");
 			appendVersions(writer, method.getVersions());
 			writer.append("})\n");
@@ -692,6 +698,38 @@ public final class MultiversionStubGenerator {
 
 		values.visitEnd();
 		visitor.visitEnd();
+	}
+
+	private static void writeClassAnnotations(ClassWriter writer, List<MultiversionClassInfo.AnnotationInfo> annotations) {
+		for (MultiversionClassInfo.AnnotationInfo annotation : annotations) {
+			writer.visitAnnotation(annotation.descriptor(), annotation.visible()).visitEnd();
+		}
+	}
+
+	private static void writeFieldAnnotations(FieldVisitor visitor, List<MultiversionClassInfo.AnnotationInfo> annotations) {
+		for (MultiversionClassInfo.AnnotationInfo annotation : annotations) {
+			visitor.visitAnnotation(annotation.descriptor(), annotation.visible()).visitEnd();
+		}
+	}
+
+	private static void writeMethodAnnotations(MethodVisitor visitor, List<MultiversionClassInfo.AnnotationInfo> annotations) {
+		for (MultiversionClassInfo.AnnotationInfo annotation : annotations) {
+			visitor.visitAnnotation(annotation.descriptor(), annotation.visible()).visitEnd();
+		}
+	}
+
+	private static void appendAnnotations(StringWriter writer, String indent, List<MultiversionClassInfo.AnnotationInfo> annotations) {
+		for (MultiversionClassInfo.AnnotationInfo annotation : annotations) {
+			writer.append(indent).append("@").append(toJavaAnnotationType(annotation.descriptor())).append("\n");
+		}
+	}
+
+	private static String toJavaAnnotationType(String descriptor) {
+		if (descriptor == null || descriptor.length() < 2) {
+			return "java.lang.annotation.Annotation";
+		}
+
+		return descriptor.substring(1, descriptor.length() - 1).replace('/', '.');
 	}
 
 	private static void deleteDirectory(Path directory) throws IOException {

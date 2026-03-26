@@ -32,6 +32,13 @@ import java.util.Map;
 import java.util.Set;
 
 public final class MultiversionClassInfo {
+	private static final String[] NULLABILITY_ANNOTATIONS = {
+			"Lorg/jetbrains/annotations/NotNull;",
+			"Lorg/jetbrains/annotations/Nullable;",
+			"Lorg/jspecify/annotations/NonNull;",
+			"Lorg/jspecify/annotations/Nullable;"
+	};
+
 	private final String name;
 	private final int access;
 	private final String signature;
@@ -39,6 +46,7 @@ public final class MultiversionClassInfo {
 	private final Map<String, Set<String>> interfaces = new LinkedHashMap<>();
 	private int innerAccess;
 	private final Set<String> versions = new LinkedHashSet<>();
+	private final List<AnnotationInfo> annotations = new ArrayList<>();
 	private final Map<MethodSignature, MultiversionMethodInfo> methods = new LinkedHashMap<>();
 	private final Map<FieldSignature, MultiversionFieldInfo> fields = new LinkedHashMap<>();
 
@@ -88,6 +96,10 @@ public final class MultiversionClassInfo {
 		return versions;
 	}
 
+	public List<AnnotationInfo> getAnnotations() {
+		return annotations;
+	}
+
 	public Map<MethodSignature, MultiversionMethodInfo> getMethods() {
 		return methods;
 	}
@@ -100,6 +112,8 @@ public final class MultiversionClassInfo {
 
 	public record FieldSignature(String name, String descriptor) { }
 
+	public record AnnotationInfo(String descriptor, boolean visible) { }
+
 	public static final class MultiversionMethodInfo {
 		private final String name;
 		private final String descriptor;
@@ -107,6 +121,7 @@ public final class MultiversionClassInfo {
 		private final List<String> exceptions;
 		private final int access;
 		private final Set<String> versions = new LinkedHashSet<>();
+		private final List<AnnotationInfo> annotations = new ArrayList<>();
 
 		public MultiversionMethodInfo(String name, String descriptor, String signature, List<String> exceptions, int access) {
 			this.name = name;
@@ -139,6 +154,18 @@ public final class MultiversionClassInfo {
 		public Set<String> getVersions() {
 			return versions;
 		}
+
+		public List<AnnotationInfo> getAnnotations() {
+			return annotations;
+		}
+
+		public void addAnnotation(String descriptor, boolean visible) {
+			final AnnotationInfo annotation = new AnnotationInfo(descriptor, visible);
+
+			if (!annotations.contains(annotation)) {
+				annotations.add(annotation);
+			}
+		}
 	}
 
 	public static final class MultiversionFieldInfo {
@@ -148,6 +175,7 @@ public final class MultiversionClassInfo {
 		private final Object value;
 		private final int access;
 		private final Set<String> versions = new LinkedHashSet<>();
+		private final List<AnnotationInfo> annotations = new ArrayList<>();
 
 		public MultiversionFieldInfo(String name, String descriptor, String signature, Object value, int access) {
 			this.name = name;
@@ -180,6 +208,18 @@ public final class MultiversionClassInfo {
 		public Set<String> getVersions() {
 			return versions;
 		}
+
+		public List<AnnotationInfo> getAnnotations() {
+			return annotations;
+		}
+
+		public void addAnnotation(String descriptor, boolean visible) {
+			final AnnotationInfo annotation = new AnnotationInfo(descriptor, visible);
+
+			if (!annotations.contains(annotation)) {
+				annotations.add(annotation);
+			}
+		}
 	}
 
 	public void verifyCompatible(MultiversionClassInfo other) {
@@ -195,6 +235,32 @@ public final class MultiversionClassInfo {
 		for (String interfaceName : interfaces) {
 			this.interfaces.computeIfAbsent(interfaceName, unused -> new LinkedHashSet<>()).add(version);
 		}
+	}
+
+	public void addAnnotation(String descriptor, boolean visible) {
+		if (!isSupportedAnnotation(descriptor)) {
+			return;
+		}
+
+		final AnnotationInfo annotation = new AnnotationInfo(descriptor, visible);
+
+		if (!annotations.contains(annotation)) {
+			annotations.add(annotation);
+		}
+	}
+
+	public static boolean isSupportedAnnotation(String descriptor) {
+		if (descriptor == null) {
+			return false;
+		}
+
+		for (String supported : NULLABILITY_ANNOTATIONS) {
+			if (supported.equals(descriptor)) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	public List<MultiversionMethodInfo> constructors() {

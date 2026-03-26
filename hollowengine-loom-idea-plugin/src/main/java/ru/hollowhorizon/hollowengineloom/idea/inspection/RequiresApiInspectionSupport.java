@@ -239,7 +239,7 @@ final class RequiresApiInspectionSupport {
 		return Set.of();
 	}
 
-	private static boolean isImportContext(PsiElement element) {
+	static boolean isImportContext(PsiElement element) {
 		return PsiTreeUtil.getParentOfType(element, PsiImportStatementBase.class, false) != null
 				|| PsiTreeUtil.getParentOfType(element, KtImportDirective.class, false) != null;
 	}

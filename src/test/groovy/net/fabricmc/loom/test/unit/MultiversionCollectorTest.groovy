@@ -129,6 +129,35 @@ class MultiversionCollectorTest extends Specification {
 		!source.contains("AttachmentTarget")
 	}
 
+	def "keeps private and protected members but skips object overrides"() {
+		given:
+		def jar = createJar([
+				"net/minecraft/example/Connection.class": simpleClass("net/minecraft/example/Connection", Opcodes.ACC_PUBLIC, "java/lang/Object", null, [
+						[name: "<init>", desc: "()V", access: Opcodes.ACC_PUBLIC],
+						[name: "send", desc: "(I)V", access: Opcodes.ACC_PRIVATE],
+						[name: "relay", desc: "(I)V", access: Opcodes.ACC_PROTECTED],
+						[name: "ping", desc: "(I)V", access: Opcodes.ACC_PUBLIC],
+						[name: "equals", desc: "(Ljava/lang/Object;)Z", access: Opcodes.ACC_PUBLIC],
+						[name: "hashCode", desc: "()I", access: Opcodes.ACC_PUBLIC],
+						[name: "toString", desc: "()Ljava/lang/String;", access: Opcodes.ACC_PUBLIC]
+				])
+		])
+		def collector = new MultiversionCollector()
+
+		when:
+		collector.addVersion("1.20.1", jar)
+		def classInfo = collector.getClasses().get("net/minecraft/example/Connection")
+
+		then:
+		classInfo != null
+		classInfo.methods.keySet().contains(new MultiversionClassInfo.MethodSignature("send", "(I)V"))
+		classInfo.methods.keySet().contains(new MultiversionClassInfo.MethodSignature("relay", "(I)V"))
+		classInfo.methods.keySet().contains(new MultiversionClassInfo.MethodSignature("ping", "(I)V"))
+		!classInfo.methods.keySet().contains(new MultiversionClassInfo.MethodSignature("equals", "(Ljava/lang/Object;)Z"))
+		!classInfo.methods.keySet().contains(new MultiversionClassInfo.MethodSignature("hashCode", "()I"))
+		!classInfo.methods.keySet().contains(new MultiversionClassInfo.MethodSignature("toString", "()Ljava/lang/String;"))
+	}
+
 	def "keeps first class kind when class kind changes across versions"() {
 		given:
 		def v1Jar = createJar([

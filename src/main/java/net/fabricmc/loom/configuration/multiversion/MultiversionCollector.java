@@ -37,6 +37,7 @@ import java.util.Set;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -92,6 +93,7 @@ public final class MultiversionCollector {
 
 			existing.verifyCompatible(candidate);
 			existing.getVersions().addAll(candidate.getVersions());
+			mergeAnnotations(existing.getAnnotations(), candidate.getAnnotations());
 			mergeInterfaces(existing, candidate);
 			existing.setInnerAccess(mergeInnerClassAccess(existing.getInnerAccess(), candidate.getInnerAccess()));
 			mergeFields(existing, candidate);
@@ -112,6 +114,7 @@ public final class MultiversionCollector {
 				}
 
 				existing.getVersions().addAll(entry.getValue().getVersions());
+				mergeAnnotations(existing.getAnnotations(), entry.getValue().getAnnotations());
 				return existing;
 			});
 		}
@@ -125,6 +128,7 @@ public final class MultiversionCollector {
 				}
 
 				existing.getVersions().addAll(entry.getValue().getVersions());
+				mergeAnnotations(existing.getAnnotations(), entry.getValue().getAnnotations());
 				return existing;
 			});
 		}
@@ -140,6 +144,14 @@ public final class MultiversionCollector {
 				existing.addAll(entry.getValue());
 				return existing;
 			});
+		}
+	}
+
+	private static void mergeAnnotations(List<MultiversionClassInfo.AnnotationInfo> target, List<MultiversionClassInfo.AnnotationInfo> source) {
+		for (MultiversionClassInfo.AnnotationInfo annotation : source) {
+			if (!target.contains(annotation)) {
+				target.add(annotation);
+			}
 		}
 	}
 
@@ -166,7 +178,7 @@ public final class MultiversionCollector {
 
 		@Override
 		public void visit(int jversion, int access, String name, String signature, String superName, String[] interfaces) {
-			if (!isVisible(access) || isIgnoredClass(name) || !isMinecraftClass(name)) {
+			if (isIgnoredClass(name) || !isMinecraftClass(name)) {
 				return;
 			}
 
@@ -177,27 +189,51 @@ public final class MultiversionCollector {
 		}
 
 		@Override
+		public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+			if (currentClass == null) {
+				return null;
+			}
+
+			currentClass.addAnnotation(descriptor, visible);
+			return null;
+		}
+
+		@Override
 		public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
-			if (currentClass == null || !isVisible(access) || isSynthetic(access)) {
+			if (currentClass == null || isSynthetic(access)) {
 				return null;
 			}
 
 			final var key = new MultiversionClassInfo.FieldSignature(name, descriptor);
 			final var field = currentClass.getFields().computeIfAbsent(key, unused -> new MultiversionClassInfo.MultiversionFieldInfo(name, descriptor, signature, value, sanitizeMemberAccess(access)));
 			field.getVersions().add(version);
-			return null;
+
+			return new FieldVisitor(Constants.ASM_VERSION) {
+				@Override
+				public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+					field.addAnnotation(descriptor, visible);
+					return null;
+				}
+			};
 		}
 
 		@Override
 		public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-			if (currentClass == null || !isVisible(access) || isSynthetic(access) || "<clinit>".equals(name)) {
+			if (currentClass == null || isSynthetic(access) || "<clinit>".equals(name) || isIgnoredObjectMethod(name, descriptor)) {
 				return null;
 			}
 
 			final var key = new MultiversionClassInfo.MethodSignature(name, descriptor);
 			final var method = currentClass.getMethods().computeIfAbsent(key, unused -> new MultiversionClassInfo.MultiversionMethodInfo(name, descriptor, signature, exceptions == null ? null : java.util.List.of(exceptions), sanitizeMemberAccess(access)));
 			method.getVersions().add(version);
-			return null;
+
+			return new MethodVisitor(Constants.ASM_VERSION) {
+				@Override
+				public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+					method.addAnnotation(descriptor, visible);
+					return null;
+				}
+			};
 		}
 
 		@Override
@@ -209,12 +245,14 @@ public final class MultiversionCollector {
 			currentClass.setInnerAccess(sanitizeInnerClassAccess(access));
 		}
 
-		private static boolean isVisible(int access) {
-			return (access & Opcodes.ACC_PUBLIC) != 0 || (access & Opcodes.ACC_PROTECTED) != 0;
-		}
-
 		private static boolean isSynthetic(int access) {
 			return (access & Opcodes.ACC_SYNTHETIC) != 0 || (access & Opcodes.ACC_BRIDGE) != 0;
+		}
+
+		private static boolean isIgnoredObjectMethod(String name, String descriptor) {
+			return ("equals".equals(name) && "(Ljava/lang/Object;)Z".equals(descriptor))
+					|| ("hashCode".equals(name) && "()I".equals(descriptor))
+					|| ("toString".equals(name) && "()Ljava/lang/String;".equals(descriptor));
 		}
 
 		private static boolean isIgnoredClass(String name) {
@@ -237,7 +275,7 @@ public final class MultiversionCollector {
 	}
 
 	private static int sanitizeMemberAccess(int access) {
-		return access & ~Opcodes.ACC_PRIVATE;
+		return access & ~(Opcodes.ACC_SYNTHETIC | Opcodes.ACC_BRIDGE);
 	}
 
 	private static int sanitizeInnerClassAccess(int access) {

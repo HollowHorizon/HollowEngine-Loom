@@ -115,6 +115,7 @@ public final class MultiversionCompletionContributor extends CompletionContribut
 
 	static Set<Integer> resolveRequiredVersions(LookupElement lookupElement, Map<PsiElement, Set<Integer>> versionCache) {
 		return ReadAction.compute(() -> resolveCandidates(lookupElement)
+				.filter(candidate -> !RequiresApiInspectionSupport.isImportContext(candidate))
 				.map(candidate -> versionCache.computeIfAbsent(candidate, RequiresApiInspectionSupport::resolveSymbolVersions))
 				.filter(versions -> !versions.isEmpty())
 				.findFirst()
