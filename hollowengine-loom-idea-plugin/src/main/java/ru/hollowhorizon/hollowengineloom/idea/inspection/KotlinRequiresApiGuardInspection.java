@@ -93,7 +93,15 @@ public final class KotlinRequiresApiGuardInspection extends LocalInspectionTool 
 			return;
 		}
 
+		if (RequiresApiInspectionSupport.isImportContext(usage) || RequiresApiInspectionSupport.isImportContext(target)) {
+			return;
+		}
+
 		final PsiElement anchor = usageAnchor(usage);
+
+		if (RequiresApiInspectionSupport.isImportContext(anchor)) {
+			return;
+		}
 
 		if (!reportedAnchors.add(anchor)) {
 			return;
